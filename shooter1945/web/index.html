@@ -13,7 +13,19 @@
 </head>
 <body>
 <canvas id="cv" width="480" height="720"></canvas>
-<button id="menuBtn" title="로그인 / 랭킹">👤 랭킹</button>
+<div id="topBtns"><button id="aiBtn" title="AI 도우미">🤖 AI 도우미</button><button id="menuBtn" title="로그인 / 랭킹">👤 랭킹</button></div>
+<div id="chat" hidden>
+  <div class="box">
+    <button id="chatClose" class="x" aria-label="닫기">✕</button>
+    <h2>🤖 AI 도우미</h2>
+    <div id="chatLog" aria-live="polite"></div>
+    <form id="chatForm" autocomplete="off">
+      <input id="chatInput" maxlength="500" placeholder="게임에 대해 물어보세요 (예: 보스 공략법)" aria-label="질문 입력">
+      <button id="chatSend" type="submit">전송</button>
+    </form>
+    <div class="note">AI 답변은 부정확할 수 있습니다.</div>
+  </div>
+</div>
 <div id="panel" hidden>
   <div class="box">
     <button id="closeBtn" class="x" aria-label="닫기">✕</button>
@@ -34,8 +46,25 @@
   </div>
 </div>
 <style>
-  #menuBtn{position:fixed;top:8px;right:8px;z-index:5;background:rgba(0,0,0,.55);color:#fff;border:1px solid #fff6;
+  #topBtns{position:fixed;top:8px;right:8px;z-index:5;display:flex;gap:6px}
+  #topBtns button{background:rgba(0,0,0,.55);color:#fff;border:1px solid #fff6;
     border-radius:8px;padding:6px 10px;font:600 13px sans-serif;cursor:pointer}
+  #chat{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
+  #chat[hidden]{display:none}
+  #chat .box{position:relative;width:min(94vw,380px);height:min(86dvh,560px);display:flex;flex-direction:column;background:#142036;color:#eef;
+    border-radius:12px;padding:16px;font:14px sans-serif;box-sizing:border-box}
+  #chat h2{margin:0 0 10px;font-size:17px}
+  #chat .x{position:absolute;top:8px;right:8px;background:transparent;border:0;color:#fff;font-size:16px;padding:4px 8px;cursor:pointer}
+  #chatLog{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:2px 2px 8px}
+  #chatLog .m{max-width:86%;padding:8px 11px;border-radius:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  #chatLog .u{align-self:flex-end;background:#3c78e6;color:#fff;border-bottom-right-radius:4px}
+  #chatLog .a{align-self:flex-start;background:#22314d;border-bottom-left-radius:4px}
+  #chatLog .e{align-self:flex-start;background:#4a2630;color:#ffd0d0}
+  #chatForm{display:flex;gap:6px;margin-top:6px}
+  #chatInput{flex:1;min-width:0;padding:9px;border-radius:6px;border:1px solid #456;background:#0b1424;color:#fff;font-size:14px}
+  #chatSend{padding:9px 14px;border:0;border-radius:6px;background:#3c78e6;color:#fff;font-weight:600;cursor:pointer}
+  #chatSend:disabled{opacity:.5;cursor:default}
+  #chat .note{font-size:11px;color:#8ea0bd;margin-top:6px;text-align:center}
   #panel{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
   #panel[hidden]{display:none}
   #panel .box{position:relative;width:min(92vw,340px);max-height:90dvh;overflow:auto;background:#142036;color:#eef;
@@ -1053,7 +1082,43 @@ const DB = {
 };
 try { const a = JSON.parse(localStorage.getItem('shooter1945_auth') || 'null'); if (a && a.token) DB.setAuth(a.token, a.username); } catch (e) {}
 
-function panelOpen() { return !$('panel').hidden; }
+function panelOpen() { return !$('panel').hidden || !$('chat').hidden; }
+
+// ---------- AI 도우미 채팅 ----------
+const chatHistory = []; // {role, content}
+let chatBusy = false;
+function chatAdd(cls, txt) {
+  const d = document.createElement('div'); d.className = 'm ' + cls; d.textContent = txt;
+  $('chatLog').appendChild(d); $('chatLog').scrollTop = $('chatLog').scrollHeight; return d;
+}
+function openChat() {
+  if (game.state === 'play') game.paused = true;
+  closePanel(); $('chat').hidden = false;
+  if (!$('chatLog').children.length) chatAdd('a', '안녕하세요! 1945 SKY STRIKER AI 도우미입니다. 조작법, 아이템, 보스 공략 등 궁금한 걸 물어보세요.');
+  $('chatInput').focus();
+}
+function closeChat() { $('chat').hidden = true; if (document.activeElement) document.activeElement.blur(); }
+async function sendChat(e) {
+  e.preventDefault();
+  const q = $('chatInput').value.trim();
+  if (!q || chatBusy) return;
+  chatBusy = true; $('chatSend').disabled = true; $('chatInput').value = '';
+  chatAdd('u', q); chatHistory.push({ role: 'user', content: q });
+  const wait = chatAdd('a', '생각하는 중…');
+  try {
+    const r = await DB.api('POST', '/api/chat', { messages: chatHistory.slice(-8) });
+    wait.textContent = r.reply; chatHistory.push({ role: 'assistant', content: r.reply });
+  } catch (err) {
+    wait.className = 'm e'; wait.textContent = err.status ? err.message : 'AI 도우미 서버에 연결할 수 없습니다.';
+    chatHistory.pop(); // 실패한 질문은 기록에서 제거
+  }
+  chatBusy = false; $('chatSend').disabled = false; $('chatLog').scrollTop = $('chatLog').scrollHeight;
+  $('chatInput').focus();
+}
+$('aiBtn').onclick = openChat;
+$('chatClose').onclick = closeChat;
+$('chat').addEventListener('pointerdown', e => { if (e.target === $('chat')) closeChat(); });
+$('chatForm').addEventListener('submit', sendChat);
 function say(m, ok) { $('msg').style.color = ok ? '#9be89b' : '#ffb4b4'; $('msg').textContent = m || ''; }
 async function refreshPanel() {
   $('authBox').hidden = !!DB.token; $('meBox').hidden = !DB.token;
@@ -1077,7 +1142,7 @@ async function refreshPanel() {
 }
 function openPanel() {
   if (game.state === 'play') game.paused = true;
-  say(''); $('panel').hidden = false; refreshPanel();
+  closeChat(); say(''); $('panel').hidden = false; refreshPanel();
 }
 function closePanel() { $('panel').hidden = true; if (document.activeElement) document.activeElement.blur(); }
 async function doAuth(kind) {
@@ -1095,7 +1160,7 @@ $('loginBtn').onclick = () => doAuth('login');
 $('regBtn').onclick = () => doAuth('register');
 $('uPass').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth('login'); });
 $('logoutBtn').onclick = () => { DB.setAuth(null); refreshPanel(); };
-addEventListener('keydown', e => { if (e.key === 'Escape' && panelOpen()) closePanel(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && panelOpen()) { closePanel(); closeChat(); } });
 DB.loadConfig();
 
 const game = new Game();

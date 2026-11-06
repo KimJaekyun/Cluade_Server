@@ -37,6 +37,17 @@ location / { proxy_pass http://127.0.0.1:3000; proxy_set_header X-Forwarded-For 
 | GET | /api/ranking?limit=10 | TOP 랭킹 |
 | GET | /api/me | 내 통계 (로그인 필요) |
 
+## AI 도우미 (OpenRouter)
+게임 화면 우측 상단 `🤖 AI 도우미` 버튼으로 여는 채팅창입니다. 브라우저는 서버의 `/api/chat`만 호출하고, 서버가 OpenRouter를 대신 호출하므로 **API 키가 브라우저에 노출되지 않습니다.**
+
+`.env` 설정 (서버에서 직접 입력, 채팅/저장소에 올리지 마세요):
+```
+OPENROUTER_API_KEY=<키>
+OPENROUTER_MODEL=openai/gpt-4o-mini   # 선택: OpenRouter 모델 ID
+CHAT_DAILY_LIMIT=500                  # 선택: 하루 전체 호출 상한
+```
+키가 비어 있으면 도우미는 "설정되지 않았습니다"라고 안내합니다. 남용 방지로 IP당 10분에 15회, 질문 500자, 대화 기록 최근 8개까지만 전송합니다. 게임 정보(조작/아이템/스테이지/보스)는 `server.js`의 `CHAT_SYSTEM`에 들어 있으니 게임이 바뀌면 함께 고치세요.
+
 ## 관리자 대시보드
 `https://<도메인>/dashboard` — 랭킹 TOP 20, 요약 카드, 일별 플레이 추이(30일), 도달 스테이지/종료 원인 분포, 최근 50판.
 
