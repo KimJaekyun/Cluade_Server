@@ -91,7 +91,7 @@ const CAUSES = ['clear', 'enemy_bullet', 'collision', 'quit'];
 
 app.post('/api/runs', runLimiter, auth(false), wrap(async (req, res) => {
   const { score, stage, cleared, duration, kills, bombs, cause } = req.body || {};
-  if (!int(score, 0, 2000000) || !int(stage, 1, 3) || !int(duration, 0, 7200) ||
+  if (!int(score, 0, 2000000) || !int(stage, 1, 4) || !int(duration, 0, 7200) ||
       !int(kills, 0, 5000) || !int(bombs, 0, 100) || !CAUSES.includes(cause) || typeof cleared !== 'boolean')
     return res.status(400).json({ error: '잘못된 기록입니다.' });
   // 간단한 부정 기록 방지: 시간 대비 비현실적 점수 거부

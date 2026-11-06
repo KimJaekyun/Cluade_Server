@@ -25,6 +25,9 @@ The browser port is `shooter1945/web/index.html` (one self-contained file with i
 ### Two parallel implementations
 The Pygame code (`main.py` + modules) and `web/index.html` are separate ports of the same game, with the same constants (480x720, 60 FPS, `MAX_POWER=4`, `MAX_BOMBS=5`, `MAX_LIVES=5`). There is no shared code, so a gameplay or balance change (enemy stats, drops, stage waves, boss patterns) must be made in both. The web version stores the hi-score in `localStorage` (`shooter1945_hi`); the Pygame version uses `highscore.txt`.
 
+### Web version has diverged (4 stages)
+`web/index.html` now has **4 themed stages in random order** (`STAGE_DEFS`: german/snow, japan/city, sea/ocean, fort/desert), where play order index = difficulty level `lv` (1–4). It adds ground enemies (`GroundEnemy`: turret/tank/ship, scroll with the background, no body collision), extra air enemies (`fighter`, `kamikaze`), and 4 two-form bosses (`BOSS_DEFS`; transform at 50% HP). The Pygame version is unchanged (3 stages, one boss) — do not assume the two match anymore. The server accepts `stage` 1–4 in `/api/runs`.
+
 ### Pygame architecture
 - `main.py` — `Game` class owns all state and the main loop. State machine: `title` → `play` → `gameover`/`victory`. All combat logic (collision, damage, drops, bombs, item effects, stage progression) lives here, not in the entity classes. Everything renders to an offscreen `canvas`, which is blitted with screen shake at the end of each frame.
 - `stages.py` — `build(n)` procedurally generates a stage's wave timeline `(seconds, enemy_kind, x)` from a **seeded RNG** (`100 + n`), so stages are deterministic. Adds `boss_time`. Timing is in seconds and compared against the tick counter `t * FPS`.

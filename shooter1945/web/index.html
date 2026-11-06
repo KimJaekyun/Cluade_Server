@@ -132,7 +132,7 @@ const Audio = {
 
 // ---------- 게임 설정 (서버 DB의 game_config 로 덮어씀) ----------
 const CFG = { player: { lives: 3, bombs: 3 }, boss: { baseHp: 260, hpPerStage: 160, scorePerStage: 5000 } };
-const DROP = { small: .10, zigzag: .15, swoop: .15, medium: .90 };
+const DROP = { small: .10, zigzag: .15, swoop: .15, medium: .90, fighter: .15, kamikaze: .12, turret: .12, tank: .20, ship: .25 };
 
 // ---------- 비행기 그리기 ----------
 const BODY = [[0,-22],[4,-10],[5,10],[0,20],[-5,10],[-4,-10]];
@@ -148,17 +148,18 @@ function drawPlane(x, y, s, body, wing, up = true, flash = false) {
   circle(x, y - 6 * s * k, Math.max(2, Math.floor(3 * s)), '#5aaae6');
 }
 
-// ---------- 배경 ----------
-const THEMES = [
-  { sea: '#2060a8', wave: '#3c82c8', land: '#469646', sand: '#dcc88c' },
-  { sea: '#166e78', wave: '#32968f', land: '#788c3c', sand: '#e6d296' },
-  { sea: '#281e46', wave: '#503c78', land: '#3c283c', sand: '#965a5a' },
-];
+// ---------- 배경 (스테이지 테마별) ----------
+const THEMES = {
+  ocean:  { base: '#2060a8', line: '#3c82c8', a: '#469646', b: '#dcc88c', clouds: true },
+  snow:   { base: '#dde7f0', line: '#c3d1de', a: '#8fa0b4', b: '#ffffff', clouds: true },
+  city:   { base: '#4b505a', line: '#5d636e', a: '#8c4a3c', b: '#6a3a30', clouds: false },
+  desert: { base: '#d9b97a', line: '#c9a560', a: '#8a6a44', b: '#b89458', clouds: false },
+};
 class Background {
   constructor() {
     const r = mulberry32(7);
-    this.theme = 0; this.scroll = 0;
-    this.islands = Array.from({ length: 6 }, () => [r() * W, r() * 2 * H - H, 30 + r() * 40, 20 + r() * 20]);
+    this.theme = 'ocean'; this.scroll = 0;
+    this.objs = Array.from({ length: 16 }, () => this.newObj(r, true));
     this.clouds = Array.from({ length: 8 }, () => {
       const w = 60 + r() * 70 | 0, h = 26 + r() * 20 | 0;
       const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -170,25 +171,88 @@ class Background {
       return [r() * W, r() * H, c, 2 + r() * 1.2];
     });
   }
+  newObj(r, init) {
+    return { x: r() * W, y: init ? r() * (H + 160) - 80 : -80, w: 30 + r() * 60, h: 20 + r() * 40, k: r() };
+  }
+  setTheme(t) { this.theme = THEMES[t] ? t : 'ocean'; }
   update(sp = 1) {
-    this.scroll = (this.scroll + 1.5 * sp) % 40;
-    for (const i of this.islands) { i[1] += 1.5 * sp; if (i[1] > H + 80) { i[0] = rnd(0, W); i[1] = -80; } }
+    this.scroll = (this.scroll + 1.5 * sp) % 160;
+    for (const o of this.objs) { o.y += 1.5 * sp; if (o.y > H + 80) Object.assign(o, this.newObj(Math.random, false)); }
     for (const c of this.clouds) { c[1] += c[3] * sp; if (c[1] > H + 50) { c[0] = rnd(-20, W); c[1] = -50; } }
   }
   draw() {
-    const th = THEMES[this.theme % THEMES.length];
-    ctx.fillStyle = th.sea; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = th.wave; ctx.lineWidth = 2; ctx.beginPath();
+    const th = THEMES[this.theme], s = this.scroll;
+    ctx.fillStyle = th.base; ctx.fillRect(0, 0, W, H);
+    if (this.theme === 'ocean') this.drawOcean(th, s);
+    else if (this.theme === 'snow') this.drawSnow(th, s);
+    else if (this.theme === 'city') this.drawCity(th, s);
+    else this.drawDesert(th, s);
+    if (th.clouds) for (const c of this.clouds) ctx.drawImage(c[2], c[0], c[1]);
+  }
+  drawOcean(th, s) {
+    ctx.strokeStyle = th.line; ctx.lineWidth = 2; ctx.beginPath();
     for (let row = 0, y = -40; y < H + 40; row++, y += 40) {
-      const yy = y + this.scroll;
+      const yy = y + (s % 40);
       for (let x = (row % 2) * 30; x < W; x += 90) { ctx.moveTo(x, yy); ctx.lineTo(x + 18, yy); }
     }
     ctx.stroke();
-    for (const [x, y, w, h] of this.islands) {
-      ctx.fillStyle = th.sand; ctx.beginPath(); ctx.ellipse(x, y, w / 2 + 6, h / 2 + 6, 0, 0, 7); ctx.fill();
-      ctx.fillStyle = th.land; ctx.beginPath(); ctx.ellipse(x, y, w / 2, h / 2, 0, 0, 7); ctx.fill();
+    for (const o of this.objs) {
+      if (o.k > .45) continue;
+      ctx.fillStyle = th.b; ctx.beginPath(); ctx.ellipse(o.x, o.y, o.w / 2 + 6, o.h / 2 + 6, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = th.a; ctx.beginPath(); ctx.ellipse(o.x, o.y, o.w / 2, o.h / 2, 0, 0, 7); ctx.fill();
     }
-    for (const c of this.clouds) ctx.drawImage(c[2], c[0], c[1]);
+  }
+  drawSnow(th, s) {
+    ctx.strokeStyle = th.line; ctx.lineWidth = 3; ctx.beginPath();
+    for (let row = 0, y = -50; y < H + 50; row++, y += 50) {
+      const yy = y + (s % 50);
+      for (let x = (row % 2) * 60; x < W; x += 120) { ctx.moveTo(x, yy); ctx.lineTo(x + 44, yy); }
+    }
+    ctx.stroke();
+    for (const o of this.objs) {
+      if (o.k > .8) { // 군사 벙커
+        ctx.fillStyle = '#6b7482'; ctx.fillRect(o.x - o.w / 2, o.y - 12, o.w, 24);
+        ctx.fillStyle = '#3c424c'; ctx.fillRect(o.x - o.w / 2 + 4, o.y - 4, o.w - 8, 6);
+      } else { // 산
+        const w = o.w * .9, h = o.h * 1.3;
+        poly([[o.x - w, o.y + h * .6], [o.x, o.y - h], [o.x + w, o.y + h * .6]], th.a, '#6a7a8c');
+        poly([[o.x - w * .38, o.y - h * .38], [o.x, o.y - h], [o.x + w * .38, o.y - h * .38]], th.b);
+      }
+    }
+  }
+  drawCity(th, s) {
+    ctx.fillStyle = '#3a3e46';
+    for (const x of [70, 240, 410]) ctx.fillRect(x - 11, 0, 22, H);
+    for (let y = -160 + (s % 160); y < H; y += 160) ctx.fillRect(0, y, W, 22);
+    ctx.strokeStyle = '#d8c860'; ctx.lineWidth = 2; ctx.setLineDash([14, 14]); ctx.lineDashOffset = -s;
+    ctx.beginPath(); for (const x of [70, 240, 410]) { ctx.moveTo(x, 0); ctx.lineTo(x, H); } ctx.stroke();
+    ctx.setLineDash([]);
+    for (const o of this.objs) { // 기와지붕 건물
+      const w = o.w + 20, h = o.h + 20, x = o.x - w / 2, y = o.y - h / 2;
+      ctx.fillStyle = o.k < .5 ? th.a : th.b; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = '#2a1a16'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+      ctx.beginPath(); ctx.moveTo(x, o.y); ctx.lineTo(x + w, o.y); ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1; ctx.beginPath();
+      for (let i = 1; i < 5; i++) { ctx.moveTo(x + w * i / 5, y); ctx.lineTo(x + w * i / 5, y + h); }
+      ctx.stroke();
+    }
+  }
+  drawDesert(th, s) {
+    ctx.strokeStyle = th.line; ctx.lineWidth = 3;
+    for (let y = -70 + (s % 70); y < H + 70; y += 70) {
+      ctx.beginPath(); ctx.moveTo(0, y);
+      for (let x = 0; x < W; x += 120) ctx.quadraticCurveTo(x + 60, y - 16, x + 120, y);
+      ctx.stroke();
+    }
+    for (const o of this.objs) {
+      if (o.k > .85) { // 요새 벽과 탑
+        ctx.fillStyle = '#9b8b6d'; ctx.fillRect(o.x - o.w, o.y - 8, o.w * 2, 16);
+        ctx.fillStyle = '#7d6e52'; ctx.fillRect(o.x - o.w - 6, o.y - 14, 18, 28); ctx.fillRect(o.x + o.w - 12, o.y - 14, 18, 28);
+      } else { // 바위
+        ctx.fillStyle = th.b; ctx.beginPath(); ctx.ellipse(o.x + 4, o.y + 5, o.w / 2, o.h / 2.4, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = th.a; ctx.beginPath(); ctx.ellipse(o.x, o.y, o.w / 2, o.h / 2.4, 0, 0, 7); ctx.fill();
+      }
+    }
   }
 }
 
@@ -316,18 +380,27 @@ class Item {
 
 // ---------- 적 ----------
 const TYPES = {
-  small:  { hp: 2,  r: 14, score: 100, body: '#be4646', wing: '#963232' },
-  zigzag: { hp: 3,  r: 15, score: 200, body: '#dc9632', wing: '#b46e1e' },
-  swoop:  { hp: 3,  r: 14, score: 200, body: '#aa5ac8', wing: '#783ca0' },
-  medium: { hp: 16, r: 26, score: 700, body: '#6e7d6e', wing: '#505f50' },
+  small:    { hp: 2,  r: 14, score: 100, body: '#be4646', wing: '#963232' },
+  zigzag:   { hp: 3,  r: 15, score: 200, body: '#dc9632', wing: '#b46e1e' },
+  swoop:    { hp: 3,  r: 14, score: 200, body: '#aa5ac8', wing: '#783ca0' },
+  medium:   { hp: 16, r: 26, score: 700, body: '#6e7d6e', wing: '#505f50' },
+  fighter:  { hp: 3,  r: 14, score: 200, body: '#5a7ea8', wing: '#3e5c80' },
+  kamikaze: { hp: 2,  r: 12, score: 150, body: '#eeeeea', wing: '#c83c3c' },
+  turret:   { hp: 4,  r: 14, score: 150, body: '#6a727c', wing: '#454b53', ground: true },
+  tank:     { hp: 6,  r: 17, score: 250, body: '#6b7b4b', wing: '#444f30', ground: true },
+  ship:     { hp: 9,  r: 24, score: 350, body: '#7d8793', wing: '#555e69', ground: true },
 };
+function spawnEnemy(kind, x, lv, palette) {
+  return TYPES[kind].ground ? new GroundEnemy(kind, x, lv, palette) : new Enemy(kind, x, lv, palette);
+}
 class Enemy {
-  constructor(kind, x, stage) {
-    const T = TYPES[kind];
-    this.kind = kind; this.stage = stage; this.isBoss = false;
-    this.r = T.r; this.score = T.score; this.body = T.body; this.wing = T.wing;
+  constructor(kind, x, stage, palette) {
+    const T = TYPES[kind], pal = palette && palette[kind];
+    this.kind = kind; this.stage = stage; this.isBoss = false; this.ground = false;
+    this.r = T.r; this.score = T.score; this.body = pal ? pal[0] : T.body; this.wing = pal ? pal[1] : T.wing;
     this.hp = T.hp + (stage - 1) * (kind === 'medium' ? 4 : 1);
     this.x = x; this.y = -30; this.x0 = x; this.dir = x < W / 2 ? 1 : -1;
+    this.vx = 0; this.vy = 2.6; this.locked = false;
     this.t = 0; this.flash = 0; this.dead = false; this.scale = this.r / 14;
   }
   aimed(p, eb, sp) {
@@ -350,6 +423,18 @@ class Enemy {
       this.y += 2.5;
       this.x += this.dir * (3 - this.t * .03);
       if (this.stage >= 3 && this.t === 60) this.aimed(p, eb, 4.5);
+    } else if (k === 'fighter') {
+      this.y += 2.6 * spd;
+      if (this.t % 80 === 35) this.aimed(p, eb, 4 + .15 * this.stage);
+      if (this.stage >= 3 && this.t % 80 === 55) this.aimed(p, eb, 4 + .15 * this.stage);
+    } else if (k === 'kamikaze') {
+      const sp = 3 + .15 * this.stage;
+      if (!this.locked) {
+        const [tx, ty] = aim(this.x, this.y, p.x, p.y, sp);
+        this.vx += (tx - this.vx) * .05; this.vy += (ty - this.vy) * .05;
+        if (this.y > p.y - 70) this.locked = true;
+      }
+      this.x += this.vx; this.y += Math.max(1.5, this.vy);
     } else if (k === 'medium') {
       if (this.t < 300) { if (this.y < 150) this.y += .8; } else this.y += 1.5;
       if (this.t > 60 && this.t % Math.max(40, 75 - 8 * this.stage) === 0)
@@ -364,76 +449,281 @@ class Enemy {
   draw() { drawPlane(this.x, this.y, this.scale, this.body, this.wing, false, this.flash > 0); }
 }
 
-class Boss {
-  constructor(stage) {
-    this.stage = stage; this.isBoss = true; this.kind = 'boss';
-    this.maxhp = CFG.boss.baseHp + CFG.boss.hpPerStage * (stage - 1); this.hp = this.maxhp;
-    this.x = W / 2; this.y = -90; this.t = 0; this.flash = 0; this.dead = false;
-    this.score = CFG.boss.scorePerStage * stage; this.spin = 0;
+// 지상 적: 배경과 함께 스크롤되고, 플레이어와 몸체 충돌은 없음(총알만 위험)
+function barrel(x, y, a, len, w, col) {
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
+  ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); ctx.stroke();
+}
+class GroundEnemy {
+  constructor(kind, x, lv, palette) {
+    const T = TYPES[kind], pal = palette && palette[kind];
+    this.kind = kind; this.stage = lv; this.isBoss = false; this.ground = true;
+    this.r = T.r; this.score = T.score; this.body = pal ? pal[0] : T.body; this.wing = pal ? pal[1] : T.wing;
+    this.hp = T.hp + (lv - 1) * (kind === 'ship' ? 2 : 1);
+    this.x = x; this.y = -40; this.t = 0; this.flash = 0; this.dead = false;
+    this.ang = Math.PI / 2; this.dir = x < W / 2 ? 1 : -1; this.off = rint(0, 40);
   }
-  get phase() { const r = this.hp / this.maxhp; return r > .66 ? 1 : r > .33 ? 2 : 3; }
+  update(p, eb) {
+    this.t++; this.y += 1.5;
+    const lv = this.stage, k = this.kind;
+    if (k === 'tank') { this.x += this.dir * .7; if (this.x < 40 || this.x > W - 40) this.dir *= -1; }
+    if (k === 'ship') { this.y += .7; this.x += Math.sin(this.t * .02) * .5; }
+    this.ang = Math.atan2(p.y - this.y, p.x - this.x);
+    if (this.y > 20 && this.y < H - 140) {
+      const n = this.t + this.off;
+      if (k === 'turret' && n % Math.max(60, 120 - 14 * lv) === 0)
+        fan(eb, this.x, this.y, p.x, p.y, 3.2 + .2 * lv, lv >= 3 ? [-10, 10] : [0]);
+      else if (k === 'tank' && n % Math.max(70, 130 - 14 * lv) === 0)
+        fan(eb, this.x, this.y, p.x, p.y, 3 + .2 * lv, [-16, 0, 16]);
+      else if (k === 'ship' && n % Math.max(55, 110 - 12 * lv) === 0)
+        fan(eb, this.x, this.y, p.x, p.y, 3.2 + .2 * lv, lv >= 3 ? [-20, -10, 0, 10, 20] : [-14, 0, 14]);
+    }
+    if (this.flash) this.flash--;
+    if (this.y > H + 60) this.dead = true;
+  }
+  collide(px, py, pr) { return (this.x - px) ** 2 + (this.y - py) ** 2 < (this.r + pr) ** 2; }
+  hit(d) { this.hp -= d; this.flash = 3; }
+  draw() {
+    const f = this.flash > 0, c = f ? '#fff' : this.body, c2 = f ? '#fff' : this.wing, x = this.x, y = this.y;
+    if (this.kind === 'turret') {
+      circle(x, y, 15, '#3c4148', '#222'); circle(x, y, 11, c2);
+      barrel(x, y, this.ang, 20, 5, c); circle(x, y, 7, c);
+    } else if (this.kind === 'tank') {
+      ctx.fillStyle = '#2c2f26'; ctx.fillRect(x - 19, y - 15, 8, 30); ctx.fillRect(x + 11, y - 15, 8, 30);
+      ctx.fillStyle = c; ctx.fillRect(x - 12, y - 13, 24, 26);
+      ctx.strokeStyle = '#1a1c14'; ctx.lineWidth = 1; ctx.strokeRect(x - 12, y - 13, 24, 26);
+      barrel(x, y, this.ang, 24, 5, c2); circle(x, y, 8, c2, '#1a1c14');
+    } else {
+      poly([[x - 14, y - 34], [x + 14, y - 34], [x + 18, y + 10], [x, y + 36], [x - 18, y + 10]], c, '#222');
+      ctx.fillStyle = c2; ctx.fillRect(x - 8, y - 24, 16, 22);
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(x - 20, y - 36); ctx.lineTo(x - 20, y - 10); ctx.moveTo(x + 20, y - 36); ctx.lineTo(x + 20, y - 10); ctx.stroke();
+      circle(x, y - 14, 7, '#3c424c'); barrel(x, y - 14, this.ang, 16, 4, '#3c424c');
+      circle(x, y + 8, 6, '#3c424c'); barrel(x, y + 8, this.ang, 14, 4, '#3c424c');
+    }
+  }
+}
+
+// ---------- 보스 (스테이지별 2형태: 1형태 → 체력 50%에서 변신) ----------
+const BOSS_DEFS = {
+  zeppelin:   { hw: 92, hw2: 60, hh: 32, range: 140, name: 'GRAF ZEPPELIN' },
+  flyingboat: { hw: 82, hw2: 66, hh: 34, range: 160, name: 'SYUMI TYPE O' },
+  battleship: { hw: 72, hw2: 76, hh: 52, range: 110, name: 'IRON CASKET' },
+  goliath:    { hw: 80, hw2: 66, hh: 40, range: 110, name: 'GOLIATH' },
+};
+class Boss {
+  constructor(type, lv) {
+    const D = BOSS_DEFS[type];
+    this.type = type; this.stage = lv; this.isBoss = true; this.kind = 'boss'; this.ground = false;
+    this.D = D; this.name = D.name; this.range = D.range;
+    this.maxhp = CFG.boss.baseHp + CFG.boss.hpPerStage * (lv - 1); this.hp = this.maxhp;
+    this.x = W / 2; this.y = -100; this.t = 0; this.flash = 0; this.dead = false;
+    this.score = CFG.boss.scorePerStage * lv; this.spin = 0; this.form = 1; this.xform = 0;
+  }
+  get phase() { return this.form === 1 ? 1 : (this.hp / this.maxhp > .25 ? 2 : 3); }
   update(p, eb) {
     if (this.flash) this.flash--;
     if (this.y < 130) { this.y += 1.5; return; }
+    if (this.xform > 0) {  // 변신 연출 (무적)
+      this.xform--;
+      if (this.xform % 8 === 0) {
+        game.fx.explode(this.x + rint(-this.D.hw, this.D.hw) * .7, this.y + rint(-this.D.hh, this.D.hh) * .7, 1.2);
+        Audio.play('boom');
+      }
+      return;
+    }
+    if (this.form === 1 && this.hp <= Math.floor(this.maxhp * .5)) {
+      this.form = 2; this.xform = 100; this.t = 0; eb.length = 0; game.shake = 40; Audio.play('bigboom');
+      return;
+    }
     this.t++;
     const ph = this.phase;
-    this.x = W / 2 + Math.sin(this.t * (.012 + .004 * ph)) * 150;
-    const sp = 3.4 + .3 * this.stage, y = this.y + 20;
-    if (ph === 1) {
-      if (this.t % 50 === 0) fan(eb, this.x, this.y + 30, p.x, p.y, sp, [-15, 0, 15]);
-      if (this.t % 120 === 60) fan(eb, this.x, this.y + 30, this.x, this.y + 100, sp - .5, [-40, -20, 0, 20, 40]);
-    } else if (ph === 2) {
-      if (this.t % 10 === 0) {
-        this.spin += .35;
-        for (const off of [0, Math.PI]) { const a = this.spin + off; eb.push(new Bullet(this.x, y, Math.cos(a) * sp, Math.sin(a) * sp, 4)); }
-      }
-      if (this.t % 100 === 0) ring(eb, this.x, y, sp - .4, 16, this.t * .1);
-    } else {
-      if (this.t % 7 === 0) {
-        this.spin += .3;
-        for (let i = 0; i < 4; i++) { const a = this.spin + i * Math.PI / 2; eb.push(new Bullet(this.x, y, Math.cos(a) * sp, Math.sin(a) * sp, 4)); }
-      }
-      if (this.t % 45 === 0) fan(eb, this.x, this.y + 30, p.x, p.y, sp + 1, [-24, -12, 0, 12, 24]);
+    this.x = W / 2 + Math.sin(this.t * (.010 + .003 * ph)) * this.range;
+    this.attack(p, eb, 3.2 + .3 * this.stage, ph);
+  }
+  attack(p, eb, sp, ph) {
+    const t = this.t, x = this.x, y = this.y;
+    const sh = (px, py, a, s) => eb.push(new Bullet(px, py, Math.cos(a) * s, Math.sin(a) * s, 4));
+    const spiral = (n, step, py, s) => { this.spin += step; for (let i = 0; i < n; i++) sh(x, py, this.spin + i * 2 * Math.PI / n, s); };
+    switch (this.type) {
+      case 'zeppelin':
+        if (ph === 1) {
+          if (t % 55 === 0) fan(eb, x, y + 30, p.x, p.y, sp, [-14, 0, 14]);
+          if (t % 130 === 65) fan(eb, x, y + 40, x, y + 100, sp - .5, [-40, -20, 0, 20, 40]);
+        } else {
+          if (t % 40 === 0) fan(eb, x, y + 30, p.x, p.y, sp + .6, [-24, -12, 0, 12, 24]);
+          if (ph === 2 ? t % 10 === 0 : t % 6 === 0) spiral(ph === 2 ? 2 : 4, .33, y + 20, sp);
+        }
+        break;
+      case 'flyingboat':
+        if (ph === 1) {
+          if (t % 8 === 0) { const a = Math.PI / 2 + Math.sin(t * .05) * .9; sh(x - 40, y + 25, a, sp); sh(x + 40, y + 25, a, sp); }
+          if (t % 90 === 45) fan(eb, x, y + 30, p.x, p.y, sp + .4, [-12, 0, 12]);
+        } else {
+          if (t % (ph === 2 ? 90 : 60) === 0) ring(eb, x, y + 20, sp - .4, ph === 2 ? 16 : 20, t * .1);
+          if (t % 12 === 0) fan(eb, x, y + 25, p.x, p.y, sp + .4, [rnd(-8, 8)]);
+          if (ph === 3 && t % 8 === 0) spiral(4, .3, y + 20, sp);
+        }
+        break;
+      case 'battleship':
+        if (ph === 1) {
+          for (let i = 0; i < 4; i++) if ((t + i * 13) % 70 === 0) fan(eb, x + (i - 1.5) * 38, y + 15, p.x, p.y, sp, [0]);
+          if (t % 160 === 80) fan(eb, x, y + 45, x, y + 100, sp - .5, [-60, -40, -20, 0, 20, 40, 60]);
+        } else {
+          if (t % 10 === 0) { const a = Math.PI / 2 + Math.sin(t * .06); sh(x - 70, y + 20, a, sp); sh(x + 70, y + 20, Math.PI - a, sp); }
+          if (t % 45 === 0) fan(eb, x, y + 30, p.x, p.y, sp + .6, [-20, -10, 0, 10, 20]);
+          if (ph === 3 && t % 70 === 0) ring(eb, x, y + 20, sp - .5, 14, t * .1);
+        }
+        break;
+      default: // goliath
+        if (ph === 1) {
+          if (t % 45 === 0) fan(eb, x, y + 30, x, y + 100, sp - .3, [-36, -24, -12, 0, 12, 24, 36]);
+          if (t % 100 === 50) fan(eb, x, y + 30, p.x, p.y, sp + .8, [-8, 0, 8]);
+        } else {
+          if (t % 80 === 0) ring(eb, x, y + 20, sp - .4, 20, t * .07);
+          if (t % 40 === 20) fan(eb, x, y + 30, p.x, p.y, sp + .6, [-14, 0, 14]);
+          if (ph === 3) { if (t % 7 === 0) spiral(3, .3, y + 20, sp); if (t % 60 === 0) ring(eb, x, y + 20, sp - .6, 24, 0); }
+        }
     }
   }
   collide(px, py, pr) {
-    return px > this.x - 62 - pr && px < this.x + 62 + pr && py > this.y - 34 - pr && py < this.y + 34 + pr;
+    const hw = this.form === 2 ? this.D.hw2 : this.D.hw, hh = this.D.hh;
+    return px > this.x - hw - pr && px < this.x + hw + pr && py > this.y - hh - pr && py < this.y + hh + pr;
   }
-  hit(d) { this.hp -= d; this.flash = 3; }
+  hit(d) {
+    if (this.xform > 0) return;
+    this.hp = this.form === 1 ? Math.max(this.hp - d, Math.floor(this.maxhp * .5)) : this.hp - d;
+    this.flash = 3;
+  }
   draw() {
-    drawPlane(this.x, this.y, 2.4, '#5f6478', '#3c465f', false, this.flash > 0);
-    for (const ox of [-34, 34]) circle(this.x + ox, this.y - 10, 6, '#c8503c');
+    const f = this.flash > 0, x = this.x, y = this.y, hw = this.D.hw, hh = this.D.hh, f2 = this.form === 2;
+    const C = c => f ? '#fff' : c;
+    const rc = (c, px, py, w, h) => { ctx.fillStyle = C(c); ctx.fillRect(px, py, w, h); };
+    const ci = (c, px, py, r) => circle(px, py, r, C(c), '#14141e');
+    const ln = (c, w, x1, y1, x2, y2) => { ctx.strokeStyle = C(c); ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); };
+    const sh = this.xform > 0 ? rnd(-3, 3) : 0; // 변신 중 흔들림
+    ctx.save(); ctx.translate(sh, 0);
+    if (this.type === 'zeppelin') {
+      if (!f2) {
+        ctx.fillStyle = C('#8793a2'); ctx.strokeStyle = '#3c4452'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(x, y, hw, hh, 0, 0, 7); ctx.fill(); ctx.stroke();
+        for (let i = -3; i <= 3; i++) ln('#6a7686', 2, x + i * 24, y - hh * .85 * Math.sqrt(1 - (i * 24 / hw) ** 2), x + i * 24, y + hh * .85 * Math.sqrt(1 - (i * 24 / hw) ** 2));
+        rc('#4a5260', x - 26, y + hh - 6, 52, 16);
+        poly([[x - 36, y - hh + 4], [x - 52, y - hh - 16], [x - 18, y - hh + 2]], C('#6a7686'), '#14141e');
+        poly([[x + 36, y - hh + 4], [x + 52, y - hh - 16], [x + 18, y - hh + 2]], C('#6a7686'), '#14141e');
+        ci('#e04030', x - 60, y + 4, 5); ci('#e04030', x + 60, y + 4, 5);
+      } else { // 인간형 전투 로봇
+        rc('#4c5462', x - 28, y + 12, 18, 34); rc('#4c5462', x + 10, y + 12, 18, 34);
+        rc('#5c6572', x - 32, y - 30, 64, 50); rc('#4a5260', x - 58, y - 26, 20, 48); rc('#4a5260', x + 38, y - 26, 20, 48);
+        rc('#2c323c', x - 54, y + 22, 12, 22); rc('#2c323c', x + 42, y + 22, 12, 22);
+        ci('#707a88', x, y - 42, 14); rc('#ff4040', x - 9, y - 45, 18, 5);
+      }
+    } else if (this.type === 'flyingboat') {
+      if (!f2) {
+        drawPlane(x, y, 3.2, '#e6e6de', '#bcbcb4', false, f);
+        ci('#d03030', x - 52, y - 36, 7); ci('#d03030', x + 52, y - 36, 7);
+      } else { // 날개가 접힌 메카
+        poly([[x - 22, y - 28], [x - 74, y - 62], [x - 62, y - 18]], C('#bcbcb4'), '#14141e');
+        poly([[x + 22, y - 28], [x + 74, y - 62], [x + 62, y - 18]], C('#bcbcb4'), '#14141e');
+        rc('#4c5462', x - 26, y + 14, 18, 30); rc('#4c5462', x + 8, y + 14, 18, 30);
+        rc('#dcdcd4', x - 32, y - 30, 64, 48); rc('#c4c4bc', x - 56, y - 24, 20, 44); rc('#c4c4bc', x + 36, y - 24, 20, 44);
+        ci('#d03030', x, y - 6, 10); ci('#e6e6de', x, y - 42, 13); rc('#ff4040', x - 8, y - 45, 16, 5);
+      }
+    } else if (this.type === 'battleship') {
+      if (!f2) {
+        poly([[x - hw * .6, y - hh], [x + hw * .6, y - hh], [x + hw * .72, y + hh * .2], [x, y + hh], [x - hw * .72, y + hh * .2]], C('#6a7482'), '#14141e');
+        poly([[x - hw * .46, y - hh + 8], [x + hw * .46, y - hh + 8], [x + hw * .56, y + hh * .15], [x, y + hh * .7], [x - hw * .56, y + hh * .15]], C('#8793a0'));
+        rc('#9aa4b0', x - 12, y - 34, 24, 16);
+        for (let i = 0; i < 4; i++) { const tx = x + (i - 1.5) * 38; ln('#3c424c', 5, tx, y - 6, tx, y + 18); ci('#4a525e', tx, y - 6, 10); }
+      } else { // 갈라진 선체 + 양팔 로봇
+        poly([[x - hw * .6 - 14, y - hh], [x - 20, y - hh], [x - 20, y + hh * .9], [x - hw * .7 - 14, y + hh * .2]], C('#6a7482'), '#14141e');
+        poly([[x + hw * .6 + 14, y - hh], [x + 20, y - hh], [x + 20, y + hh * .9], [x + hw * .7 + 14, y + hh * .2]], C('#6a7482'), '#14141e');
+        rc('#5a6472', x - 22, y - 36, 44, 56); ci('#707a88', x, y - 46, 12); rc('#ff4040', x - 8, y - 49, 16, 5);
+        rc('#4a5260', x - 78, y - 26, 22, 50); rc('#4a5260', x + 56, y - 26, 22, 50);
+        ci('#2c323c', x - 67, y + 30, 9); ci('#2c323c', x + 67, y + 30, 9);
+      }
+    } else { // goliath
+      if (!f2) {
+        rc('#2c2f26', x - hw, y - hh, 20, hh * 2); rc('#2c2f26', x + hw - 20, y - hh, 20, hh * 2);
+        rc('#6b7b4b', x - hw + 16, y - hh + 6, hw * 2 - 32, hh * 2 - 12);
+        ctx.strokeStyle = '#1a1c14'; ctx.lineWidth = 2; ctx.strokeRect(x - hw + 16, y - hh + 6, hw * 2 - 32, hh * 2 - 12);
+        for (const bx of [-16, 0, 16]) ln('#3c4528', 6, x + bx, y, x + bx, y + hh + 18);
+        ci('#556238', x, y, 22);
+      } else { // 다각 보행 형태
+        for (let i = 0; i < 6; i++) {
+          const side = i < 3 ? -1 : 1, j = i % 3, step = ((this.t >> 3) + i) % 2 * 6;
+          ln('#3c4528', 6, x + side * 20, y + (j - 1) * 10, x + side * (52 + j * 8), y + 24 + j * 4 + step);
+        }
+        ctx.fillStyle = C('#6b7b4b'); ctx.strokeStyle = '#1a1c14'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(x, y - 4, 54, 30, 0, 0, 7); ctx.fill(); ctx.stroke();
+        rc('#3c4528', x - 8, y, 16, 46); ci('#c04030', x, y - 10, 8);
+      }
+    }
+    ctx.restore();
   }
   drawHud() {
     const w = 300, x0 = (W - w) / 2;
     ctx.fillStyle = '#282828'; ctx.fillRect(x0 - 2, 52, w + 4, 12);
-    ctx.fillStyle = '#dc3232'; ctx.fillRect(x0, 54, w * Math.max(0, this.hp) / this.maxhp, 8);
+    ctx.fillStyle = this.form === 2 ? '#ff7a30' : '#dc3232'; ctx.fillRect(x0, 54, w * Math.max(0, this.hp) / this.maxhp, 8);
+    ctx.fillStyle = '#fff'; ctx.fillRect(x0 + w / 2 - 1, 52, 2, 12); // 변신 지점(50%)
   }
 }
 
 // ---------- 스테이지 ----------
-function buildStage(n) {
-  const r = mulberry32(100 + n), R = (a, b) => a + r() * (b - a);
-  const waves = [];
-  const patterns = ['line', 'vee', 'column', 'medium'];
-  if (n >= 2) patterns.push('swoop', 'swoop');
-  if (n >= 3) patterns.push('medium', 'column');
-  const end = 40 + 6 * n;
+const STAGE_DEFS = {
+  german: {
+    name: '독일 군사기지', theme: 'snow', seed: 11, boss: 'zeppelin',
+    patterns: ['line', 'vee', 'fighters', 'fighters', 'column', 'turrets', 'turrets', 'medium'],
+    palette: { small: ['#7a8a9c', '#5a6a7c'], zigzag: ['#8c8c98', '#6c6c78'], fighter: ['#4c6a8c', '#34506c'], medium: ['#58606a', '#444c56'] },
+  },
+  japan: {
+    name: '일본 수도', theme: 'city', seed: 23, boss: 'flyingboat',
+    patterns: ['line', 'vee', 'swoop', 'kamikaze', 'kamikaze', 'turrets', 'turrets', 'medium'],
+    palette: { small: ['#e8e8e0', '#c8c8c0'], swoop: ['#d8d8d0', '#b0b0a8'], medium: ['#9aa08a', '#6c725c'] },
+  },
+  sea: {
+    name: '해상 전함', theme: 'ocean', seed: 37, boss: 'battleship',
+    patterns: ['line', 'vee', 'column', 'swoop', 'ship', 'ship', 'medium'],
+    palette: {},
+  },
+  fort: {
+    name: '지상 요새', theme: 'desert', seed: 41, boss: 'goliath',
+    patterns: ['line', 'fighters', 'tanks', 'tanks', 'turrets', 'turrets', 'medium'],
+    palette: { small: ['#b09050', '#8a7038'], fighter: ['#a07040', '#7a5230'], medium: ['#7a6a4a', '#5a4c32'] },
+  },
+};
+const STAGE_IDS = Object.keys(STAGE_DEFS);
+const STAGE_COUNT = STAGE_IDS.length;
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+// lv = 진행 순서(1~4). 뒤에 나올수록 적과 탄막이 강해짐
+function buildStage(id, lv) {
+  const def = STAGE_DEFS[id], r = mulberry32(def.seed * 100 + lv), R = (a, b) => a + r() * (b - a);
+  const cl = x => Math.min(W - 30, Math.max(30, x));
+  const waves = [], end = 44 + 4 * lv;
   let t = 2;
   while (t < end) {
-    const p = patterns[Math.floor(r() * patterns.length)];
-    if (p === 'line') for (let i = 0; i < 5; i++) waves.push([t, 'small', 60 + i * 90]);
-    else if (p === 'vee') for (let i = -2; i <= 2; i++) waves.push([t + Math.abs(i) * .4, 'small', W / 2 + i * 60]);
-    else if (p === 'column') { const x = R(100, W - 100); for (let i = 0; i < 5; i++) waves.push([t + i * .5, 'zigzag', x]); }
-    else if (p === 'swoop') { const x = r() < .5 ? 20 : W - 20; for (let i = 0; i < 4; i++) waves.push([t + i * .5, 'swoop', x]); }
-    else waves.push([t, 'medium', R(100, W - 100)]);
-    t += R(2.4, 3.6) - .25 * n;
+    const p = def.patterns[Math.floor(r() * def.patterns.length)];
+    switch (p) {
+      case 'line': for (let i = 0; i < 5; i++) waves.push([t, 'small', 60 + i * 90]); break;
+      case 'vee': for (let i = -2; i <= 2; i++) waves.push([t + Math.abs(i) * .4, 'small', W / 2 + i * 60]); break;
+      case 'column': { const x = R(100, W - 100); for (let i = 0; i < 5; i++) waves.push([t + i * .5, 'zigzag', x]); break; }
+      case 'swoop': { const x = r() < .5 ? 20 : W - 20; for (let i = 0; i < 4; i++) waves.push([t + i * .5, 'swoop', x]); break; }
+      case 'fighters': { const x = R(90, W - 90); for (let i = 0; i < 3; i++) waves.push([t + i * .6, 'fighter', cl(x + (i - 1) * 70)]); break; }
+      case 'kamikaze': for (let i = 0; i < 4; i++) waves.push([t + i * .45, 'kamikaze', R(40, W - 40)]); break;
+      case 'turrets': for (let i = 0; i < 3; i++) waves.push([t + i * .4, 'turret', R(40, W - 40)]); break;
+      case 'tanks': for (let i = 0; i < 2; i++) waves.push([t + i * 1.5, 'tank', R(60, W - 60)]); break;
+      case 'ship': waves.push([t, 'ship', R(70, W - 70)]); if (lv >= 3) waves.push([t + 1.2, 'ship', R(70, W - 70)]); break;
+      default: waves.push([t, 'medium', R(100, W - 100)]);
+    }
+    t += Math.max(1.8, R(2.4, 3.6) - .25 * lv);
   }
   waves.sort((a, b) => a[0] - b[0]);
-  const names = ['STAGE 1  -  태평양 상공', 'STAGE 2  -  산호초 해협', 'STAGE 3  -  최후의 요새'];
-  return { name: names[n - 1], waves, bossTime: end + 4 };
+  return { name: `STAGE ${lv}  -  ${def.name}`, waves, bossTime: end + 4 };
 }
-const STAGES = [1, 2, 3].map(buildStage);
 
 // ---------- 입력 ----------
 const keys = new Set();
@@ -502,11 +792,15 @@ class Game {
   }
   newGame() {
     this.player = new Player(); this.score = 0; this.stageIdx = 0; this.overTimer = 0;
+    this.order = shuffled(STAGE_IDS); // 4개 스테이지를 무작위 순서로 진행
     this.kills = 0; this.bombsUsed = 0; this.totalT = 0; this.lastCause = 'enemy_bullet'; this.rankMsg = '';
     this.state = 'play'; this.paused = false; this.startStage();
   }
   startStage() {
-    this.stage = STAGES[this.stageIdx]; this.bg.theme = this.stageIdx;
+    this.lv = this.stageIdx + 1;
+    this.stageDef = STAGE_DEFS[this.order[this.stageIdx]];
+    this.stage = buildStage(this.order[this.stageIdx], this.lv);
+    this.bg.setTheme(this.stageDef.theme);
     this.t = 0; this.waveI = 0;
     this.enemies = []; this.pbul = []; this.ebul = []; this.items = [];
     this.boss = null; this.bossSpawned = false; this.clearTimer = 0;
@@ -596,10 +890,10 @@ class Game {
       const waves = this.stage.waves;
       while (this.waveI < waves.length && waves[this.waveI][0] * FPS <= this.t) {
         const [, kind, x] = waves[this.waveI];
-        this.enemies.push(new Enemy(kind, x, this.stageIdx + 1)); this.waveI++;
+        this.enemies.push(spawnEnemy(kind, x, this.lv, this.stageDef.palette)); this.waveI++;
       }
       if (!this.bossSpawned && this.t >= this.stage.bossTime * FPS) {
-        this.bossSpawned = true; this.boss = new Boss(this.stageIdx + 1);
+        this.bossSpawned = true; this.boss = new Boss(this.stageDef.boss, this.lv);
         this.warn = 150; Audio.play('warn');
       }
     }
@@ -620,7 +914,7 @@ class Game {
     if (!p.dead && p.inv <= 0) {
       let hit = this.ebul.some(b => (b.x - p.x) ** 2 + (b.y - p.y) ** 2 < (b.r + p.hitR) ** 2);
       if (hit) this.lastCause = 'enemy_bullet';
-      else if (targets.some(e => !e.dead && e.collide(p.x, p.y, p.hitR + 2))) { hit = true; this.lastCause = 'collision'; }
+      else if (targets.some(e => !e.ground && !e.dead && e.collide(p.x, p.y, p.hitR + 2))) { hit = true; this.lastCause = 'collision'; }
       if (hit) this.hurtPlayer();
     }
     if (!p.dead) for (const it of this.items)
@@ -632,7 +926,7 @@ class Game {
     if (this.shake > 0) this.shake--;
 
     if (this.clearTimer > 0 && --this.clearTimer === 0) {
-      if (this.stageIdx + 1 < STAGES.length) { this.stageIdx++; this.startStage(); }
+      if (this.stageIdx + 1 < STAGE_COUNT) { this.stageIdx++; this.startStage(); }
       else this.finish('victory');
     }
     if (p.dead && --this.overTimer <= 0) this.finish('gameover');
@@ -662,9 +956,13 @@ class Game {
     text('BOMB x' + p.bombs, 18, '#8cbeff', W - 10, H - 40, 'right');
     text('POWER', 14, '#fff', W - 130, H - 18);
     for (let i = 0; i < MAX_POWER; i++) { ctx.fillStyle = i < p.power ? '#ff6e46' : '#464646'; ctx.fillRect(W - 95 + i * 18, H - 26, 14, 14); }
-    if (this.boss && this.boss.y >= 130) { this.boss.drawHud(); text('BOSS', 14, '#ff7878', W / 2, 42); }
+    if (this.boss && this.boss.y >= 130) { this.boss.drawHud(); text('BOSS  ' + this.boss.name, 14, '#ff7878', W / 2, 42); }
+    text(this.lv + '/' + STAGE_COUNT, 14, '#cfe0ff', W / 2, 20);
     if (this.banner > 0) text(this.stage.name, 28, '#fff', W / 2, H / 3);
-    if (this.warn > 0 && Math.floor(this.warn / 12) % 2 === 0) text('WARNING!!', 44, '#ff3c3c', W / 2, H / 3);
+    if (this.warn > 0 && Math.floor(this.warn / 12) % 2 === 0) {
+      text('WARNING!!', 44, '#ff3c3c', W / 2, H / 3);
+      text(BOSS_DEFS[this.stageDef.boss].name, 20, '#ffb4b4', W / 2, H / 3 + 40);
+    }
     if (this.clearTimer > 0) text('STAGE CLEAR!', 40, '#fff078', W / 2, H / 3);
     if (this.paused) text('PAUSED', 48, '#fff', W / 2, H / 2);
     if ('ontouchstart' in window) {
@@ -674,8 +972,9 @@ class Game {
   }
   drawPlay() {
     this.bg.draw();
+    for (const e of this.enemies) if (e.ground) e.draw();
     for (const it of this.items) it.draw();
-    for (const e of this.enemies) e.draw();
+    for (const e of this.enemies) if (!e.ground) e.draw();
     if (this.boss) this.boss.draw();
     for (const b of this.pbul) b.draw();
     this.player.draw();
