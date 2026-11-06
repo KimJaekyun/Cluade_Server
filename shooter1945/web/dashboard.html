@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>1945 관리자 대시보드</title>
+<style>
+  :root{--bg:#f4f6fa;--card:#fff;--text:#1b2433;--muted:#5d6b82;--line:#e1e6ef;--c1:#3b6fd4;--c2:#e08a2c;--ok:#2e9a5b;--bad:#cf4a4a;--accent:#3b6fd4}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0e1420;--card:#172032;--text:#e8edf6;--muted:#93a1b8;--line:#27324a;--c1:#6c9bff;--c2:#f0a24a;--ok:#4cc17f;--bad:#ff7a7a;--accent:#6c9bff}}
+  :root[data-theme=dark]{--bg:#0e1420;--card:#172032;--text:#e8edf6;--muted:#93a1b8;--line:#27324a;--c1:#6c9bff;--c2:#f0a24a;--ok:#4cc17f;--bad:#ff7a7a;--accent:#6c9bff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:14px 16px;max-width:1100px;margin:0 auto}
+  h1{font-size:17px;margin:0;flex:1 1 220px;min-width:0}
+  html,body{overflow-x:hidden}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;padding:7px 12px}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  main{max-width:1100px;margin:0 auto;padding:0 16px 40px}
+  .grid{display:grid;gap:12px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .two{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600}
+  .kpi{font-size:24px;font-weight:700;line-height:1.2}
+  .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:12px}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .scroll{overflow-x:auto}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line)}
+  .tag.ok{color:var(--ok);border-color:var(--ok)} .tag.bad{color:var(--bad);border-color:var(--bad)}
+  #login{max-width:340px;margin:80px auto;text-align:center}
+  #login input{width:100%;padding:10px;margin:10px 0;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+  #err{color:var(--bad);min-height:20px;font-size:13px}
+  svg{display:block;width:100%;height:auto} svg text{fill:var(--muted);font-size:11px}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .bar-row{display:grid;grid-template-columns:84px 1fr 78px;gap:8px;align-items:center;margin:7px 0;font-size:13px}
+  .bar-bg{background:var(--line);border-radius:5px;height:14px;overflow:hidden}
+  .bar-fg{height:100%;border-radius:5px;background:var(--c1)}
+  .empty{color:var(--muted);padding:8px 0}
+  .upd{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="login" class="card" hidden>
+  <h1>🔒 관리자 로그인</h1>
+  <input id="pw" type="password" placeholder="관리자 비밀번호" autocomplete="current-password">
+  <div id="err"></div>
+  <button id="loginBtn" class="primary">로그인</button>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>1945 SKY STRIKER 대시보드</h1>
+    <span class="upd" id="upd"></span>
+    <button id="refresh">새로고침</button>
+    <button id="logout">로그아웃</button>
+  </header>
+  <main>
+    <div class="grid cards" id="cards"></div>
+    <div class="card" style="margin-top:12px">
+      <h2>일별 플레이 추이 (최근 30일, 한국시간)</h2>
+      <div id="dailyChart"></div>
+      <div class="legend"><span><i style="background:var(--c1)"></i>플레이 수</span><span><i style="background:var(--c2)"></i>신규 가입자</span></div>
+    </div>
+    <div class="grid two">
+      <div class="card"><h2>도달 스테이지 분포</h2><div id="stageChart"></div></div>
+      <div class="card"><h2>종료 원인</h2><div id="causeChart"></div></div>
+    </div>
+    <div class="card" style="margin-top:12px"><h2>랭킹 TOP 20 (계정별 최고 점수)</h2><div class="scroll" id="rankTable"></div></div>
+    <div class="card" style="margin-top:12px"><h2>최근 플레이 기록 (50판)</h2><div class="scroll" id="recentTable"></div></div>
+  </main>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const NS = 'http://www.w3.org/2000/svg';
+const KEY = 'shooter1945_admin';
+const CAUSE = { clear: '클리어', enemy_bullet: '적 탄 피격', collision: '충돌', quit: '중도 종료', unknown: '알 수 없음' };
+const fmt = n => Number(n).toLocaleString('ko-KR');
+const dur = s => s >= 60 ? Math.floor(s / 60) + '분 ' + (s % 60) + '초' : s + '초';
+let token = null, timer = null;
+try { token = sessionStorage.getItem(KEY); } catch (e) {}
+
+async function api(method, url, body) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(data.error || '요청 실패'); e.status = res.status; throw e; }
+  return data;
+}
+function el(tag, attrs = {}, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function svg(tag, attrs = {}, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function showLogin(msg) {
+  $('app').hidden = true; $('login').hidden = false; $('err').textContent = msg || '';
+  clearInterval(timer); $('pw').focus();
+}
+async function doLogin() {
+  try {
+    const r = await api('POST', '/api/admin/login', { password: $('pw').value });
+    token = r.token; $('pw').value = '';
+    try { sessionStorage.setItem(KEY, token); } catch (e) {}
+    load();
+  } catch (e) { $('err').textContent = e.message; }
+}
+function logout() { token = null; try { sessionStorage.removeItem(KEY); } catch (e) {} showLogin(''); }
+
+function kpi(title, value, sub) {
+  const c = el('div', { class: 'card' });
+  c.append(el('h2', {}, title), el('div', { class: 'kpi' }, value));
+  if (sub) c.append(el('div', { class: 'sub' }, sub));
+  return c;
+}
+function renderCards(s) {
+  const box = $('cards'); box.replaceChildren(
+    kpi('총 플레이', fmt(s.plays), '오늘 ' + fmt(s.today) + '판'),
+    kpi('가입자', fmt(s.registered), '오늘 신규 ' + fmt(s.newToday) + '명'),
+    kpi('비로그인 플레이', fmt(s.guestPlays), s.plays ? Math.round(s.guestPlays / s.plays * 100) + '%' : '-'),
+    kpi('평균 점수', fmt(s.avgScore), '최고 ' + fmt(s.maxScore)),
+    kpi('클리어율', (s.clearRate * 100).toFixed(1) + '%', '4개 스테이지 모두 클리어'),
+    kpi('평균 플레이 시간', dur(s.avgSec)),
+  );
+}
+
+function renderDaily(daily) {
+  const W = 720, H = 230, L = 36, R = 8, T = 10, B = 26, iw = W - L - R, ih = H - T - B;
+  const max = Math.max(4, ...daily.map(d => Math.max(d.plays, d.newPlayers)));
+  const nice = Math.ceil(max / 4) * 4;
+  const s = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '일별 플레이 수와 신규 가입자 수' });
+  for (let i = 0; i <= 4; i++) {
+    const y = T + ih - ih * i / 4;
+    s.append(svg('line', { x1: L, x2: W - R, y1: y, y2: y, stroke: 'var(--line)' }), svg('text', { x: L - 6, y: y + 4, 'text-anchor': 'end' }, String(nice * i / 4)));
+  }
+  const bw = iw / daily.length;
+  daily.forEach((d, i) => {
+    const x = L + i * bw, h = ih * d.plays / nice;
+    const r = svg('rect', { x: x + bw * .18, y: T + ih - h, width: bw * .64, height: Math.max(h, 0), fill: 'var(--c1)', rx: 2 });
+    r.append(svg('title', {}, `${d.date}  플레이 ${d.plays}판 / 신규 ${d.newPlayers}명`));
+    s.append(r);
+    if (i % 5 === 0 || i === daily.length - 1) s.append(svg('text', { x: x + bw / 2, y: H - 8, 'text-anchor': 'middle' }, d.date.slice(5)));
+  });
+  const pts = daily.map((d, i) => `${L + i * bw + bw / 2},${T + ih - ih * d.newPlayers / nice}`).join(' ');
+  s.append(svg('polyline', { points: pts, fill: 'none', stroke: 'var(--c2)', 'stroke-width': 2.5, 'stroke-linejoin': 'round' }));
+  daily.forEach((d, i) => { if (d.newPlayers) s.append(svg('circle', { cx: L + i * bw + bw / 2, cy: T + ih - ih * d.newPlayers / nice, r: 3.5, fill: 'var(--c2)' })); });
+  $('dailyChart').replaceChildren(s);
+}
+
+function renderBars(target, rows, total, color) {
+  const box = $(target);
+  if (!rows.length) { box.replaceChildren(el('div', { class: 'empty' }, '데이터가 없습니다')); return; }
+  box.replaceChildren(...rows.map(r => {
+    const pct = total ? r.count / total * 100 : 0;
+    const row = el('div', { class: 'bar-row' });
+    const bg = el('div', { class: 'bar-bg' }), fg = el('div', { class: 'bar-fg' });
+    fg.style.width = pct + '%'; if (color && color[r.key]) fg.style.background = color[r.key];
+    bg.append(fg);
+    row.append(el('span', {}, r.label), bg, el('span', { style: 'text-align:right' }, `${fmt(r.count)}판 (${pct.toFixed(0)}%)`));
+    return row;
+  }));
+}
+
+function table(target, cols, rows) {
+  const box = $(target);
+  if (!rows.length) { box.replaceChildren(el('div', { class: 'empty' }, '데이터가 없습니다')); return; }
+  const t = el('table'), thead = el('thead'), tr = el('tr');
+  cols.forEach(c => tr.append(el('th', { class: c.n ? 'n' : '' }, c.title)));
+  thead.append(tr); t.append(thead);
+  const tb = el('tbody');
+  rows.forEach(r => {
+    const row = el('tr');
+    cols.forEach(c => {
+      const td = el('td', { class: c.n ? 'n' : '' });
+      const v = c.get(r);
+      if (v instanceof Node) td.append(v); else td.textContent = v;
+      row.append(td);
+    });
+    tb.append(row);
+  });
+  t.append(tb); box.replaceChildren(t);
+}
+
+function render(d) {
+  renderCards(d.summary);
+  renderDaily(d.daily);
+  const tot = d.stages.reduce((a, b) => a + b.count, 0);
+  renderBars('stageChart', d.stages.map(s => ({ label: s.stage + '스테이지', count: s.count })), tot);
+  const ct = d.causes.reduce((a, b) => a + b.count, 0);
+  renderBars('causeChart', d.causes.sort((a, b) => b.count - a.count).map(c => ({ key: c.cause, label: CAUSE[c.cause] || c.cause, count: c.count })), ct,
+    { clear: 'var(--ok)', enemy_bullet: 'var(--bad)', collision: 'var(--c2)', quit: 'var(--muted)' });
+  table('rankTable', [
+    { title: '#', n: true, get: r => r.rank }, { title: '닉네임', get: r => r.username },
+    { title: '최고 점수', n: true, get: r => fmt(r.score) }, { title: '도달', n: true, get: r => r.stage + '스테이지' },
+    { title: '플레이', n: true, get: r => fmt(r.plays) + '판' },
+  ], d.ranking);
+  table('recentTable', [
+    { title: '시각', get: r => r.at }, { title: '플레이어', get: r => r.username || '(비로그인)' },
+    { title: '점수', n: true, get: r => fmt(r.score) }, { title: '도달', n: true, get: r => r.stage + '/4' },
+    { title: '시간', n: true, get: r => dur(r.duration_sec) }, { title: '격추', n: true, get: r => fmt(r.kills) },
+    { title: '폭탄', n: true, get: r => r.bombs_used },
+    { title: '결과', get: r => el('span', { class: 'tag ' + (r.cleared ? 'ok' : r.cause === 'quit' ? '' : 'bad') }, CAUSE[r.cause] || r.cause) },
+  ], d.recent);
+  $('upd').textContent = new Date().toLocaleTimeString('ko-KR') + ' 갱신';
+}
+
+async function load() {
+  try {
+    const d = await api('GET', '/api/admin/stats');
+    $('login').hidden = true; $('app').hidden = false;
+    render(d);
+    clearInterval(timer); timer = setInterval(load, 60000);
+  } catch (e) {
+    if (e.status === 401) { token = null; try { sessionStorage.removeItem(KEY); } catch (x) {} showLogin('세션이 만료되었습니다. 다시 로그인하세요.'); }
+    else if (!$('app').hidden) $('upd').textContent = '갱신 실패: ' + e.message;
+    else showLogin(e.message);
+  }
+}
+$('loginBtn').onclick = doLogin;
+$('pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+$('refresh').onclick = load;
+$('logout').onclick = logout;
+if (token) load(); else showLogin('');
+</script>
+</body>
+</html>

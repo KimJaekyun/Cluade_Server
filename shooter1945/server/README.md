@@ -37,6 +37,20 @@ location / { proxy_pass http://127.0.0.1:3000; proxy_set_header X-Forwarded-For 
 | GET | /api/ranking?limit=10 | TOP 랭킹 |
 | GET | /api/me | 내 통계 (로그인 필요) |
 
+## 관리자 대시보드
+`https://<도메인>/dashboard` — 랭킹 TOP 20, 요약 카드, 일별 플레이 추이(30일), 도달 스테이지/종료 원인 분포, 최근 50판.
+
+1. 서버 `.env`에 `ADMIN_PASSWORD=<길고 추측하기 어려운 비밀번호>`를 추가합니다. 비워 두면 대시보드는 꺼집니다.
+2. `docker compose up -d --force-recreate`로 반영합니다.
+3. `/dashboard`에서 그 비밀번호로 로그인합니다 (12시간 유지, 브라우저 탭을 닫으면 로그아웃).
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| POST | /api/admin/login | 관리자 로그인 (15분에 10회 제한) |
+| GET | /api/admin/stats | 대시보드 데이터 (관리자 토큰 필요) |
+
+날짜는 한국시간(KST) 기준으로 집계합니다.
+
 ## 밸런스 수정
 `UPDATE game_config SET cfg_value = JSON_SET(cfg_value, '$.medium.hp', 24) WHERE cfg_key='enemies';`
 (적 체력/점수/드롭률, 보스 체력, 시작 목숨·폭탄 — 재시작 없이 1분 내 반영)

@@ -1,6 +1,7 @@
 'use strict';
 require('dotenv').config();
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
@@ -133,6 +134,85 @@ app.get('/api/me', auth(true), wrap(async (req, res) => {
     totalSec: Number(s.total_sec), kills: Number(s.kills), clears: Number(s.clears),
   });
 }));
+
+// ---------- 관리자 대시보드 ----------
+// ADMIN_PASSWORD 가 .env 에 없으면 관리자 기능은 꺼져 있음
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+const sha = s => crypto.createHash('sha256').update(String(s)).digest();
+
+app.post('/api/admin/login', adminLimiter, (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(503).json({ error: '관리자 기능이 설정되지 않았습니다.' });
+  const pw = (req.body || {}).password;
+  if (typeof pw !== 'string' || !crypto.timingSafeEqual(sha(pw), sha(ADMIN_PASSWORD)))
+    return res.status(401).json({ error: '비밀번호가 올바르지 않습니다.' });
+  res.json({ token: jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '12h' }) });
+});
+
+function adminAuth(req, res, next) {
+  const h = req.headers.authorization || '';
+  try {
+    const p = jwt.verify(h.startsWith('Bearer ') ? h.slice(7) : '', JWT_SECRET);
+    if (p && p.admin === true) return next();
+  } catch (e) { /* fallthrough */ }
+  res.status(401).json({ error: '관리자 로그인이 필요합니다.' });
+}
+
+app.get('/api/admin/stats', adminAuth, wrap(async (req, res) => {
+  // DB 서버 시간대와 상관없이 한국시간(KST)으로 날짜를 계산하기 위한 보정(분)
+  const one = async (sql, params) => (await pool.query(sql, params))[0][0];
+  const tz = await one('SELECT TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS off');
+  const sh = 540 - Number(tz.off);
+  const s = await one(
+    `SELECT COUNT(*) plays, COALESCE(SUM(player_id IS NULL),0) guest_plays, COALESCE(AVG(score),0) avg_score,
+            COALESCE(MAX(score),0) max_score, COALESCE(AVG(cleared),0) clear_rate, COALESCE(AVG(duration_sec),0) avg_sec,
+            COALESCE(SUM(DATE(created_at + INTERVAL ? MINUTE) = DATE(NOW() + INTERVAL ? MINUTE)),0) today
+     FROM play_logs`, [sh, sh]);
+  const pl = await one(
+    `SELECT COUNT(*) registered,
+            COALESCE(SUM(DATE(created_at + INTERVAL ? MINUTE) = DATE(NOW() + INTERVAL ? MINUTE)),0) new_today FROM players`, [sh, sh]);
+
+  const [dailyPlays] = await pool.query(
+    `SELECT DATE_FORMAT(created_at + INTERVAL ? MINUTE, '%Y-%m-%d') d, COUNT(*) c FROM play_logs
+     WHERE created_at >= NOW() - INTERVAL 31 DAY GROUP BY d`, [sh]);
+  const [dailyNew] = await pool.query(
+    `SELECT DATE_FORMAT(created_at + INTERVAL ? MINUTE, '%Y-%m-%d') d, COUNT(*) c FROM players
+     WHERE created_at >= NOW() - INTERVAL 31 DAY GROUP BY d`, [sh]);
+  const pm = Object.fromEntries(dailyPlays.map(r => [r.d, Number(r.c)]));
+  const nm = Object.fromEntries(dailyNew.map(r => [r.d, Number(r.c)]));
+  const daily = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.now() + 9 * 3600e3 - i * 86400e3).toISOString().slice(0, 10);
+    daily.push({ date: d, plays: pm[d] || 0, newPlayers: nm[d] || 0 });
+  }
+
+  const [stages] = await pool.query('SELECT stage_reached s, COUNT(*) c FROM play_logs GROUP BY s ORDER BY s');
+  const [causes] = await pool.query('SELECT cause, COUNT(*) c FROM play_logs GROUP BY cause');
+  const [ranking] = await pool.query(
+    `SELECT p.username, t.best AS score, t.plays,
+            (SELECT MAX(l.stage_reached) FROM play_logs l WHERE l.player_id = p.id AND l.score = t.best) AS stage
+     FROM (SELECT player_id, MAX(score) best, COUNT(*) plays FROM play_logs WHERE player_id IS NOT NULL GROUP BY player_id) t
+     JOIN players p ON p.id = t.player_id ORDER BY t.best DESC, p.id ASC LIMIT 20`);
+  const [recent] = await pool.query(
+    `SELECT l.id, COALESCE(p.username, '') username, l.score, l.stage_reached stage, l.cleared, l.duration_sec,
+            l.kills, l.bombs_used, l.cause, DATE_FORMAT(l.created_at + INTERVAL ? MINUTE, '%m-%d %H:%i') at
+     FROM play_logs l LEFT JOIN players p ON p.id = l.player_id ORDER BY l.id DESC LIMIT 50`, [sh]);
+
+  res.set('Cache-Control', 'no-store').json({
+    summary: {
+      plays: Number(s.plays), guestPlays: Number(s.guest_plays), avgScore: Math.round(Number(s.avg_score)),
+      maxScore: Number(s.max_score), clearRate: Number(s.clear_rate), avgSec: Math.round(Number(s.avg_sec)),
+      today: Number(s.today), registered: Number(pl.registered), newToday: Number(pl.new_today),
+    },
+    daily,
+    stages: stages.map(r => ({ stage: r.s, count: Number(r.c) })),
+    causes: causes.map(r => ({ cause: r.cause, count: Number(r.c) })),
+    ranking: ranking.map((r, i) => ({ rank: i + 1, username: r.username, score: r.score, stage: r.stage, plays: Number(r.plays) })),
+    recent: recent.map(r => ({ ...r, cleared: !!r.cleared })),
+  });
+}));
+
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, '..', 'web', 'dashboard.html')));
 
 app.get('/api/health', wrap(async (req, res) => { await pool.query('SELECT 1'); res.json({ ok: true }); }));
 
