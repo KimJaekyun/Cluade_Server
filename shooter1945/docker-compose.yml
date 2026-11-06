@@ -1,0 +1,21 @@
+services:
+  game-1945:
+    build: .
+    container_name: game_1945
+    restart: unless-stopped
+    ports:
+      - "9650:3000"          # [호스트 포트]:[컨테이너 포트] -> NPM 에서 이 포트로 프록시
+    env_file:
+      - ./server/.env        # DB_USER / DB_PASSWORD / JWT_SECRET (저장소에 올리지 않음)
+    environment:
+      - DB_HOST=host.docker.internal   # 호스트에서 13306 으로 노출된 MySQL 컨테이너(mysql-13306)
+      - DB_PORT=13306
+      - TZ=Asia/Seoul
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - nas-network
+
+networks:
+  nas-network:
+    external: true
