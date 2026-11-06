@@ -137,15 +137,17 @@ app.get('/api/me', auth(true), wrap(async (req, res) => {
 
 // ---------- 관리자 대시보드 ----------
 // ADMIN_PASSWORD 가 .env 에 없으면 관리자 기능은 꺼져 있음
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// 쉼표(,)로 여러 개 지정 가능: ADMIN_PASSWORD=비번1,비번2  (비밀번호 자체에는 쉼표를 쓸 수 없음)
+const ADMIN_PASSWORDS = (process.env.ADMIN_PASSWORD || '').split(',').map(s => s.trim()).filter(Boolean);
 const adminLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
 const sha = s => crypto.createHash('sha256').update(String(s)).digest();
 
 app.post('/api/admin/login', adminLimiter, (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(503).json({ error: '관리자 기능이 설정되지 않았습니다.' });
+  if (!ADMIN_PASSWORDS.length) return res.status(503).json({ error: '관리자 기능이 설정되지 않았습니다.' });
   const pw = (req.body || {}).password;
-  if (typeof pw !== 'string' || !crypto.timingSafeEqual(sha(pw), sha(ADMIN_PASSWORD)))
-    return res.status(401).json({ error: '비밀번호가 올바르지 않습니다.' });
+  // 모든 후보를 끝까지 비교해 어느 것이 맞는지 응답 시간으로 드러나지 않게 함
+  const ok = typeof pw === 'string' && ADMIN_PASSWORDS.map(a => crypto.timingSafeEqual(sha(pw), sha(a))).some(Boolean);
+  if (!ok) return res.status(401).json({ error: '비밀번호가 올바르지 않습니다.' });
   res.json({ token: jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '12h' }) });
 });
 
