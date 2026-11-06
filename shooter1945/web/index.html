@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>1945 SKY STRIKER</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0f1a;overflow:hidden;overscroll-behavior:none}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;touch-action:none;background:#20609f;
+    height:min(100dvh,calc(100vw*3/2));aspect-ratio:2/3;max-width:100vw;image-rendering:auto}
+</style>
+</head>
+<body>
+<canvas id="cv" width="480" height="720"></canvas>
+<button id="menuBtn" title="로그인 / 랭킹">👤 랭킹</button>
+<div id="panel" hidden>
+  <div class="box">
+    <button id="closeBtn" class="x" aria-label="닫기">✕</button>
+    <div id="authBox">
+      <h2>로그인</h2>
+      <input id="uName" placeholder="닉네임 (2~12자)" maxlength="12" autocomplete="username">
+      <input id="uPass" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="current-password">
+      <div class="row"><button id="loginBtn">로그인</button><button id="regBtn" class="sub">회원가입</button></div>
+    </div>
+    <div id="meBox" hidden>
+      <h2 id="meName"></h2>
+      <div id="meStats" class="stats"></div>
+      <button id="logoutBtn" class="sub">로그아웃</button>
+    </div>
+    <div id="msg"></div>
+    <h3>🏆 TOP 10</h3>
+    <ol id="rankList"></ol>
+  </div>
+</div>
+<style>
+  #menuBtn{position:fixed;top:8px;right:8px;z-index:5;background:rgba(0,0,0,.55);color:#fff;border:1px solid #fff6;
+    border-radius:8px;padding:6px 10px;font:600 13px sans-serif;cursor:pointer}
+  #panel{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
+  #panel[hidden]{display:none}
+  #panel .box{position:relative;width:min(92vw,340px);max-height:90dvh;overflow:auto;background:#142036;color:#eef;
+    border-radius:12px;padding:18px;font:14px sans-serif;box-sizing:border-box}
+  #panel h2{margin:0 0 10px;font-size:18px} #panel h3{margin:16px 0 6px;font-size:15px}
+  #panel input{display:block;width:100%;box-sizing:border-box;margin:6px 0;padding:9px;border-radius:6px;border:1px solid #456;background:#0b1424;color:#fff;font-size:14px}
+  #panel button{padding:9px 14px;border:0;border-radius:6px;background:#3c78e6;color:#fff;font-weight:600;cursor:pointer}
+  #panel button.sub{background:#46546e} #panel .row{display:flex;gap:8px;margin-top:6px}
+  #panel .x{position:absolute;top:8px;right:8px;background:transparent;font-size:16px;padding:4px 8px}
+  #panel .stats{line-height:1.7;margin-bottom:10px} #msg{min-height:18px;margin-top:8px;color:#ffb4b4}
+  #rankList{margin:0;padding-left:26px;line-height:1.7} #rankList li span{float:right;color:#ffe678}
+</style>
+<script>
+'use strict';
+const W = 480, H = 720, FPS = 60;
+const MAX_POWER = 4, MAX_BOMBS = 5, MAX_LIVES = 5;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const FONT = '"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+
+// ---------- 유틸 ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const rnd = (a, b) => a + Math.random() * (b - a);
+const rint = (a, b) => Math.floor(rnd(a, b + 1));
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+function wpick(items, weights) {
+  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < items.length; i++) { r -= weights[i]; if (r < 0) return items[i]; }
+  return items[items.length - 1];
+}
+
+function text(str, size, color, x, y, align = 'center', shadow = true) {
+  ctx.font = `bold ${size}px ${FONT}`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  if (shadow) { ctx.fillStyle = '#000'; ctx.fillText(str, x + 2, y + 2); }
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+}
+function circle(x, y, r, fill, stroke, lw = 1) {
+  ctx.beginPath(); ctx.arc(x, y, Math.max(0, r), 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function poly(pts, fill, stroke) {
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill();
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+
+// ---------- 오디오 (Web Audio 합성) ----------
+const Audio = {
+  ac: null, bufs: {},
+  init() {
+    if (this.ac) { if (this.ac.state === 'suspended') this.ac.resume(); return; }
+    try {
+      this.ac = new (window.AudioContext || window.webkitAudioContext)();
+      const t = (f0, f1, d, k, v) => this.make(f0, f1, d, k, v);
+      this.bufs = {
+        shoot: t(1100, 600, .05, 'square', .06), hit: t(300, 200, .04, 'square', .10),
+        boom: t(220, 40, .30, 'noise', .30), bigboom: t(160, 20, .90, 'noise', .45),
+        item: t(600, 1500, .15, 'square', .15), bomb: t(120, 30, 1.0, 'noise', .45),
+        hurt: t(400, 60, .40, 'square', .25), warn: t(300, 300, .30, 'square', .20),
+      };
+    } catch (e) { this.ac = null; }
+  },
+  make(f0, f1, dur, kind, vol) {
+    const rate = this.ac.sampleRate, n = Math.floor(rate * dur);
+    const buf = this.ac.createBuffer(1, n, rate), d = buf.getChannelData(0);
+    let ph = 0;
+    for (let i = 0; i < n; i++) {
+      const k = i / n;
+      ph += (f0 + (f1 - f0) * k) / rate;
+      const v = kind === 'square' ? ((ph % 1) < .5 ? 1 : -1) : Math.random() * 2 - 1;
+      d[i] = v * (1 - k) * vol;
+    }
+    return buf;
+  },
+  play(name) {
+    if (!this.ac || !this.bufs[name]) return;
+    const s = this.ac.createBufferSource();
+    s.buffer = this.bufs[name]; s.connect(this.ac.destination); s.start();
+  },
+};
+
+// ---------- 게임 설정 (서버 DB의 game_config 로 덮어씀) ----------
+const CFG = { player: { lives: 3, bombs: 3 }, boss: { baseHp: 260, hpPerStage: 160, scorePerStage: 5000 } };
+const DROP = { small: .10, zigzag: .15, swoop: .15, medium: .90 };
+
+// ---------- 비행기 그리기 ----------
+const BODY = [[0,-22],[4,-10],[5,10],[0,20],[-5,10],[-4,-10]];
+const WING = [[0,-4],[24,8],[24,14],[0,8],[-24,14],[-24,8]];
+const TAIL = [[0,12],[10,22],[10,24],[0,20],[-10,24],[-10,22]];
+function drawPlane(x, y, s, body, wing, up = true, flash = false) {
+  const k = up ? 1 : -1;
+  const tr = pts => pts.map(p => [x + p[0] * s, y + p[1] * s * k]);
+  const wc = flash ? '#fff' : wing, bc = flash ? '#fff' : body;
+  poly(tr(WING), wc, '#14141e');
+  poly(tr(TAIL), wc);
+  poly(tr(BODY), bc, '#14141e');
+  circle(x, y - 6 * s * k, Math.max(2, Math.floor(3 * s)), '#5aaae6');
+}
+
+// ---------- 배경 ----------
+const THEMES = [
+  { sea: '#2060a8', wave: '#3c82c8', land: '#469646', sand: '#dcc88c' },
+  { sea: '#166e78', wave: '#32968f', land: '#788c3c', sand: '#e6d296' },
+  { sea: '#281e46', wave: '#503c78', land: '#3c283c', sand: '#965a5a' },
+];
+class Background {
+  constructor() {
+    const r = mulberry32(7);
+    this.theme = 0; this.scroll = 0;
+    this.islands = Array.from({ length: 6 }, () => [r() * W, r() * 2 * H - H, 30 + r() * 40, 20 + r() * 20]);
+    this.clouds = Array.from({ length: 8 }, () => {
+      const w = 60 + r() * 70 | 0, h = 26 + r() * 20 | 0;
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d'); g.fillStyle = 'rgba(255,255,255,.28)';
+      for (let i = 0; i < 4; i++) {
+        const cw = w / 3 + r() * (w / 6 + 10), ch = h / 2 + r() * (h / 2 - 2);
+        g.beginPath(); g.ellipse(r() * (w - cw) + cw / 2, r() * (h - ch) + ch / 2, cw / 2, ch / 2, 0, 0, 7); g.fill();
+      }
+      return [r() * W, r() * H, c, 2 + r() * 1.2];
+    });
+  }
+  update(sp = 1) {
+    this.scroll = (this.scroll + 1.5 * sp) % 40;
+    for (const i of this.islands) { i[1] += 1.5 * sp; if (i[1] > H + 80) { i[0] = rnd(0, W); i[1] = -80; } }
+    for (const c of this.clouds) { c[1] += c[3] * sp; if (c[1] > H + 50) { c[0] = rnd(-20, W); c[1] = -50; } }
+  }
+  draw() {
+    const th = THEMES[this.theme % THEMES.length];
+    ctx.fillStyle = th.sea; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = th.wave; ctx.lineWidth = 2; ctx.beginPath();
+    for (let row = 0, y = -40; y < H + 40; row++, y += 40) {
+      const yy = y + this.scroll;
+      for (let x = (row % 2) * 30; x < W; x += 90) { ctx.moveTo(x, yy); ctx.lineTo(x + 18, yy); }
+    }
+    ctx.stroke();
+    for (const [x, y, w, h] of this.islands) {
+      ctx.fillStyle = th.sand; ctx.beginPath(); ctx.ellipse(x, y, w / 2 + 6, h / 2 + 6, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = th.land; ctx.beginPath(); ctx.ellipse(x, y, w / 2, h / 2, 0, 0, 7); ctx.fill();
+    }
+    for (const c of this.clouds) ctx.drawImage(c[2], c[0], c[1]);
+  }
+}
+
+// ---------- 이펙트 ----------
+class Effects {
+  constructor() { this.parts = []; this.pops = []; this.rings = []; }
+  explode(x, y, size = 1) {
+    const cols = ['#ffdc50', '#ff9628', '#ff5a1e', '#fff'];
+    const n = Math.floor(14 * size) + 6, sq = Math.sqrt(size);
+    for (let i = 0; i < n; i++) {
+      const a = rnd(0, Math.PI * 2), sp = rnd(1, 5) * sq, life = rint(18, 38);
+      this.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life, ml: life, col: pick(cols), sz: rnd(2, 5) * sq });
+    }
+    this.rings.push({ x, y, r: 4, mr: 18 * size + 14 });
+  }
+  popup(x, y, t, c = '#fff') { this.pops.push({ x, y, life: 45, t, c }); }
+  update() {
+    for (const p of this.parts) { p.x += p.vx; p.y += p.vy; p.vx *= .95; p.vy *= .95; p.life--; }
+    this.parts = this.parts.filter(p => p.life > 0);
+    for (const r of this.rings) r.r += 3;
+    this.rings = this.rings.filter(r => r.r < r.mr);
+    for (const p of this.pops) { p.y -= .8; p.life--; }
+    this.pops = this.pops.filter(p => p.life > 0);
+  }
+  draw() {
+    for (const r of this.rings) circle(r.x, r.y, r.r, null, '#ffe696', 2);
+    for (const p of this.parts) circle(p.x, p.y, Math.max(1, p.sz * p.life / p.ml), p.col);
+    for (const p of this.pops) text(p.t, 18, p.c, p.x, p.y);
+  }
+}
+
+// ---------- 탄 ----------
+class Bullet {
+  constructor(x, y, vx, vy, r = 3, dmg = 1, kind = 'e') {
+    Object.assign(this, { x, y, vx, vy, r, dmg, kind, dead: false });
+  }
+  update() {
+    this.x += this.vx; this.y += this.vy;
+    if (this.x < -40 || this.x > W + 40 || this.y < -40 || this.y > H + 40) this.dead = true;
+  }
+  draw() {
+    if (this.kind === 'p') {
+      ctx.fillStyle = '#fff078'; ctx.beginPath(); ctx.ellipse(this.x, this.y - 1, 3, 8, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(this.x, this.y - 1, 1, 4.5, 0, 0, 7); ctx.fill();
+    } else {
+      circle(this.x, this.y, this.r, '#e6283c');
+      circle(this.x, this.y, Math.max(1, this.r - 2), '#ffe6e6');
+    }
+  }
+}
+function aim(x, y, tx, ty, sp) {
+  const d = Math.hypot(tx - x, ty - y) || 1;
+  return [(tx - x) / d * sp, (ty - y) / d * sp];
+}
+function fan(out, x, y, tx, ty, sp, angles, r = 4) {
+  const base = Math.atan2(ty - y, tx - x);
+  for (const a of angles) {
+    const g = base + a * Math.PI / 180;
+    out.push(new Bullet(x, y, Math.cos(g) * sp, Math.sin(g) * sp, r));
+  }
+}
+function ring(out, x, y, sp, n, off = 0, r = 4) {
+  for (let i = 0; i < n; i++) {
+    const g = off + i * 2 * Math.PI / n;
+    out.push(new Bullet(x, y, Math.cos(g) * sp, Math.sin(g) * sp, r));
+  }
+}
+
+// ---------- 플레이어 ----------
+const PATTERNS = {
+  1: [[0, 0]], 2: [[-8, 0], [8, 0]], 3: [[0, 0], [-12, -1.5], [12, 1.5]],
+  4: [[0, 0], [-10, -1.2], [10, 1.2], [-18, -2.6], [18, 2.6]],
+};
+class Player {
+  constructor() { this.lives = CFG.player.lives; this.bombs = CFG.player.bombs; this.power = 1; this.slow = false; this.hitR = 4; this.respawn(); }
+  respawn() { this.x = W / 2; this.y = H - 90; this.inv = 150; this.cool = 0; this.dead = false; this.t = 0; }
+  update(inp, bullets) {
+    this.t++;
+    let dx = (inp.right ? 1 : 0) - (inp.left ? 1 : 0), dy = (inp.down ? 1 : 0) - (inp.up ? 1 : 0);
+    this.slow = inp.slow;
+    let sp = this.slow ? 2.5 : 5;
+    if (dx && dy) sp *= .7071;
+    this.x += dx * sp + inp.dragX; this.y += dy * sp + inp.dragY;
+    inp.dragX = inp.dragY = 0;
+    this.x = Math.min(W - 20, Math.max(20, this.x));
+    this.y = Math.min(H - 25, Math.max(30, this.y));
+    if (this.inv > 0) this.inv--;
+    if (this.cool > 0) this.cool--;
+    if (inp.fire && this.cool <= 0) {
+      this.cool = 8;
+      for (const [ox, vx] of PATTERNS[Math.min(this.power, MAX_POWER)])
+        bullets.push(new Bullet(this.x + ox, this.y - 20, vx, -12, 3, 1, 'p'));
+      Audio.play('shoot');
+    }
+  }
+  draw() {
+    if (this.dead) return;
+    if (this.inv > 0 && Math.floor(this.inv / 4) % 2 === 0) return;
+    drawPlane(this.x, this.y, 1, '#c8d7e6', '#46965a', true);
+    const w = this.t % 2 ? 10 : 16;
+    ctx.strokeStyle = '#e6e6e6'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(this.x - w, this.y - 23); ctx.lineTo(this.x + w, this.y - 23); ctx.stroke();
+    if (this.slow || inputs.touching) circle(this.x, this.y, this.hitR, '#ff3c3c', '#fff');
+  }
+}
+
+// ---------- 아이템 ----------
+const KINDS = { P: ['#e64632', 'P'], B: ['#3c78e6', 'B'], L: ['#3cbe5a', 'UP'], S: ['#f0c828', '$'] };
+class Item {
+  constructor(kind, x, y) { this.kind = kind; this.x = x; this.y = y; this.r = 12; this.dead = false; }
+  update(p) {
+    this.y += 1.6;
+    if (!p.dead) {
+      const d = Math.hypot(p.x - this.x, p.y - this.y) || 1;
+      if (d < 90) { this.x += (p.x - this.x) / d * 4; this.y += (p.y - this.y) / d * 4; }
+    }
+    if (this.y > 760) this.dead = true;
+  }
+  draw() {
+    const [col, label] = KINDS[this.kind];
+    circle(this.x, this.y, this.r, col, '#fff', 2);
+    text(label, label.length > 1 ? 13 : 16, '#fff', this.x, this.y, 'center', false);
+  }
+}
+
+// ---------- 적 ----------
+const TYPES = {
+  small:  { hp: 2,  r: 14, score: 100, body: '#be4646', wing: '#963232' },
+  zigzag: { hp: 3,  r: 15, score: 200, body: '#dc9632', wing: '#b46e1e' },
+  swoop:  { hp: 3,  r: 14, score: 200, body: '#aa5ac8', wing: '#783ca0' },
+  medium: { hp: 16, r: 26, score: 700, body: '#6e7d6e', wing: '#505f50' },
+};
+class Enemy {
+  constructor(kind, x, stage) {
+    const T = TYPES[kind];
+    this.kind = kind; this.stage = stage; this.isBoss = false;
+    this.r = T.r; this.score = T.score; this.body = T.body; this.wing = T.wing;
+    this.hp = T.hp + (stage - 1) * (kind === 'medium' ? 4 : 1);
+    this.x = x; this.y = -30; this.x0 = x; this.dir = x < W / 2 ? 1 : -1;
+    this.t = 0; this.flash = 0; this.dead = false; this.scale = this.r / 14;
+  }
+  aimed(p, eb, sp) {
+    if (this.y > 0 && this.y < H - 150) {
+      const [vx, vy] = aim(this.x, this.y, p.x, p.y, sp);
+      eb.push(new Bullet(this.x, this.y, vx, vy, 4));
+    }
+  }
+  update(p, eb) {
+    this.t++;
+    const k = this.kind, spd = 1 + .1 * (this.stage - 1);
+    if (k === 'small') {
+      this.y += 2.4 * spd;
+      if (this.stage >= 2 && this.t === 50) this.aimed(p, eb, 4);
+    } else if (k === 'zigzag') {
+      this.y += 1.8 * spd;
+      this.x = this.x0 + Math.sin(this.t * .06) * 60;
+      if (this.t % 90 === 45) this.aimed(p, eb, 4);
+    } else if (k === 'swoop') {
+      this.y += 2.5;
+      this.x += this.dir * (3 - this.t * .03);
+      if (this.stage >= 3 && this.t === 60) this.aimed(p, eb, 4.5);
+    } else if (k === 'medium') {
+      if (this.t < 300) { if (this.y < 150) this.y += .8; } else this.y += 1.5;
+      if (this.t > 60 && this.t % Math.max(40, 75 - 8 * this.stage) === 0)
+        fan(eb, this.x, this.y + 10, p.x, p.y, 3.6 + .3 * this.stage,
+          this.stage < 3 ? [-18, 0, 18] : [-30, -15, 0, 15, 30]);
+    }
+    if (this.flash) this.flash--;
+    if (this.y > H + 40 || this.x < -50 || this.x > W + 50) this.dead = true;
+  }
+  collide(px, py, pr) { return (this.x - px) ** 2 + (this.y - py) ** 2 < (this.r + pr) ** 2; }
+  hit(d) { this.hp -= d; this.flash = 3; }
+  draw() { drawPlane(this.x, this.y, this.scale, this.body, this.wing, false, this.flash > 0); }
+}
+
+class Boss {
+  constructor(stage) {
+    this.stage = stage; this.isBoss = true; this.kind = 'boss';
+    this.maxhp = CFG.boss.baseHp + CFG.boss.hpPerStage * (stage - 1); this.hp = this.maxhp;
+    this.x = W / 2; this.y = -90; this.t = 0; this.flash = 0; this.dead = false;
+    this.score = CFG.boss.scorePerStage * stage; this.spin = 0;
+  }
+  get phase() { const r = this.hp / this.maxhp; return r > .66 ? 1 : r > .33 ? 2 : 3; }
+  update(p, eb) {
+    if (this.flash) this.flash--;
+    if (this.y < 130) { this.y += 1.5; return; }
+    this.t++;
+    const ph = this.phase;
+    this.x = W / 2 + Math.sin(this.t * (.012 + .004 * ph)) * 150;
+    const sp = 3.4 + .3 * this.stage, y = this.y + 20;
+    if (ph === 1) {
+      if (this.t % 50 === 0) fan(eb, this.x, this.y + 30, p.x, p.y, sp, [-15, 0, 15]);
+      if (this.t % 120 === 60) fan(eb, this.x, this.y + 30, this.x, this.y + 100, sp - .5, [-40, -20, 0, 20, 40]);
+    } else if (ph === 2) {
+      if (this.t % 10 === 0) {
+        this.spin += .35;
+        for (const off of [0, Math.PI]) { const a = this.spin + off; eb.push(new Bullet(this.x, y, Math.cos(a) * sp, Math.sin(a) * sp, 4)); }
+      }
+      if (this.t % 100 === 0) ring(eb, this.x, y, sp - .4, 16, this.t * .1);
+    } else {
+      if (this.t % 7 === 0) {
+        this.spin += .3;
+        for (let i = 0; i < 4; i++) { const a = this.spin + i * Math.PI / 2; eb.push(new Bullet(this.x, y, Math.cos(a) * sp, Math.sin(a) * sp, 4)); }
+      }
+      if (this.t % 45 === 0) fan(eb, this.x, this.y + 30, p.x, p.y, sp + 1, [-24, -12, 0, 12, 24]);
+    }
+  }
+  collide(px, py, pr) {
+    return px > this.x - 62 - pr && px < this.x + 62 + pr && py > this.y - 34 - pr && py < this.y + 34 + pr;
+  }
+  hit(d) { this.hp -= d; this.flash = 3; }
+  draw() {
+    drawPlane(this.x, this.y, 2.4, '#5f6478', '#3c465f', false, this.flash > 0);
+    for (const ox of [-34, 34]) circle(this.x + ox, this.y - 10, 6, '#c8503c');
+  }
+  drawHud() {
+    const w = 300, x0 = (W - w) / 2;
+    ctx.fillStyle = '#282828'; ctx.fillRect(x0 - 2, 52, w + 4, 12);
+    ctx.fillStyle = '#dc3232'; ctx.fillRect(x0, 54, w * Math.max(0, this.hp) / this.maxhp, 8);
+  }
+}
+
+// ---------- 스테이지 ----------
+function buildStage(n) {
+  const r = mulberry32(100 + n), R = (a, b) => a + r() * (b - a);
+  const waves = [];
+  const patterns = ['line', 'vee', 'column', 'medium'];
+  if (n >= 2) patterns.push('swoop', 'swoop');
+  if (n >= 3) patterns.push('medium', 'column');
+  const end = 40 + 6 * n;
+  let t = 2;
+  while (t < end) {
+    const p = patterns[Math.floor(r() * patterns.length)];
+    if (p === 'line') for (let i = 0; i < 5; i++) waves.push([t, 'small', 60 + i * 90]);
+    else if (p === 'vee') for (let i = -2; i <= 2; i++) waves.push([t + Math.abs(i) * .4, 'small', W / 2 + i * 60]);
+    else if (p === 'column') { const x = R(100, W - 100); for (let i = 0; i < 5; i++) waves.push([t + i * .5, 'zigzag', x]); }
+    else if (p === 'swoop') { const x = r() < .5 ? 20 : W - 20; for (let i = 0; i < 4; i++) waves.push([t + i * .5, 'swoop', x]); }
+    else waves.push([t, 'medium', R(100, W - 100)]);
+    t += R(2.4, 3.6) - .25 * n;
+  }
+  waves.sort((a, b) => a[0] - b[0]);
+  const names = ['STAGE 1  -  태평양 상공', 'STAGE 2  -  산호초 해협', 'STAGE 3  -  최후의 요새'];
+  return { name: names[n - 1], waves, bossTime: end + 4 };
+}
+const STAGES = [1, 2, 3].map(buildStage);
+
+// ---------- 입력 ----------
+const keys = new Set();
+const inputs = { left: 0, right: 0, up: 0, down: 0, fire: 0, slow: 0, dragX: 0, dragY: 0, touching: false };
+const BOMB_BTN = { x: W - 70, y: H - 130, r: 34 };
+let touchId = null, lastPt = null, touchFire = false, pressedEnter = false, pressedBomb = false, pressedPause = false, pressedEsc = false;
+
+function readKeys() {
+  inputs.left = keys.has('ArrowLeft') || keys.has('KeyA');
+  inputs.right = keys.has('ArrowRight') || keys.has('KeyD');
+  inputs.up = keys.has('ArrowUp') || keys.has('KeyW');
+  inputs.down = keys.has('ArrowDown') || keys.has('KeyS');
+  inputs.fire = keys.has('Space') || keys.has('KeyJ') || keys.has('KeyZ') || touchFire;
+  inputs.slow = keys.has('ShiftLeft') || keys.has('ShiftRight');
+}
+const typing = e => e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+addEventListener('keydown', e => {
+  if (typing(e) || panelOpen()) return;
+  Audio.init();
+  if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  keys.add(e.code);
+  if (e.code === 'Enter') pressedEnter = true;
+  if (['KeyB', 'KeyX', 'ControlLeft'].includes(e.code)) pressedBomb = true;
+  if (e.code === 'KeyP') pressedPause = true;
+  if (e.code === 'Escape') pressedEsc = true;
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => { keys.clear(); touchFire = false; if (game.state === 'play') game.paused = true; });
+
+function canvasPt(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
+}
+cv.addEventListener('pointerdown', e => {
+  Audio.init();
+  const pt = canvasPt(e);
+  if (game.state !== 'play') { pressedEnter = true; return; }
+  if (game.paused) { game.paused = false; return; }
+  if (e.pointerType === 'mouse') return;
+  if (Math.hypot(pt[0] - BOMB_BTN.x, pt[1] - BOMB_BTN.y) < BOMB_BTN.r + 10) { pressedBomb = true; return; }
+  if (touchId === null) {
+    touchId = e.pointerId; lastPt = pt; touchFire = true; inputs.touching = true;
+    cv.setPointerCapture(e.pointerId);
+  }
+});
+cv.addEventListener('pointermove', e => {
+  if (e.pointerId !== touchId) return;
+  const pt = canvasPt(e);
+  inputs.dragX += pt[0] - lastPt[0]; inputs.dragY += pt[1] - lastPt[1]; lastPt = pt;
+});
+function endTouch(e) { if (e.pointerId === touchId) { touchId = null; touchFire = false; inputs.touching = false; } }
+cv.addEventListener('pointerup', endTouch);
+cv.addEventListener('pointercancel', endTouch);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------- 게임 ----------
+let hiScore = 0;
+try { hiScore = parseInt(localStorage.getItem('shooter1945_hi') || '0', 10) || 0; } catch (e) {}
+function saveHi(v) { try { localStorage.setItem('shooter1945_hi', String(v)); } catch (e) {} }
+
+class Game {
+  constructor() {
+    this.bg = new Background(); this.fx = new Effects();
+    this.state = 'title'; this.paused = false; this.shake = 0; this.tick = 0; this.score = 0;
+  }
+  newGame() {
+    this.player = new Player(); this.score = 0; this.stageIdx = 0; this.overTimer = 0;
+    this.kills = 0; this.bombsUsed = 0; this.totalT = 0; this.lastCause = 'enemy_bullet'; this.rankMsg = '';
+    this.state = 'play'; this.paused = false; this.startStage();
+  }
+  startStage() {
+    this.stage = STAGES[this.stageIdx]; this.bg.theme = this.stageIdx;
+    this.t = 0; this.waveI = 0;
+    this.enemies = []; this.pbul = []; this.ebul = []; this.items = [];
+    this.boss = null; this.bossSpawned = false; this.clearTimer = 0;
+    this.banner = 150; this.warn = 0; this.bombT = 0;
+    this.player.respawn();
+  }
+  damage(e, d) {
+    if (e.dead) return;
+    e.hit(d);
+    if (e.hp <= 0) this.kill(e);
+  }
+  kill(e) {
+    e.dead = true; this.score += e.score;
+    if (e.isBoss) { this.onBossDead(e); return; }
+    const big = e.kind === 'medium';
+    this.fx.explode(e.x, e.y, big ? 2 : 1);
+    this.fx.popup(e.x, e.y - 10, String(e.score), '#fff08c');
+    Audio.play('boom');
+    if (big) this.shake = Math.max(this.shake, 8);
+    this.kills++;
+    if (Math.random() <= DROP[e.kind]) {
+      const kind = big ? wpick('PBLS'.split(''), [60, 20, 5, 15]) : wpick('PBLS'.split(''), [40, 14, 4, 42]);
+      this.items.push(new Item(kind, e.x, e.y));
+    }
+  }
+  onBossDead(b) {
+    Audio.play('bigboom'); this.shake = 40;
+    for (let i = 0; i < 14; i++) this.fx.explode(b.x + rint(-60, 60), b.y + rint(-35, 35), rnd(1, 2.5));
+    this.fx.popup(b.x, b.y, '+' + b.score, '#fff08c');
+    this.ebul = [];
+    for (const e of this.enemies) if (!e.dead) { e.dead = true; this.fx.explode(e.x, e.y, 1); }
+    this.boss = null; this.clearTimer = 240;
+    this.player.inv = Math.max(this.player.inv, 300);
+  }
+  useBomb() {
+    const p = this.player;
+    if (p.dead || p.bombs <= 0 || this.bombT > 0 || this.clearTimer > 0) return;
+    p.bombs--; this.bombsUsed++; this.bombT = 60; p.inv = Math.max(p.inv, 120);
+    this.ebul = []; Audio.play('bomb'); this.shake = Math.max(this.shake, 20);
+    for (const e of [...this.enemies]) this.damage(e, 25);
+    if (this.boss) this.damage(this.boss, 40);
+  }
+  hurtPlayer() {
+    const p = this.player;
+    p.lives--; p.power = Math.max(1, p.power - 1); p.bombs = Math.max(p.bombs, 2);
+    this.fx.explode(p.x, p.y, 1.6); Audio.play('hurt');
+    this.shake = Math.max(this.shake, 15); this.ebul = [];
+    if (p.lives <= 0) { p.dead = true; this.overTimer = 100; } else p.respawn();
+  }
+  applyItem(it) {
+    const p = this.player; Audio.play('item');
+    const pop = (t, c) => this.fx.popup(p.x, p.y - 30, t, c);
+    if (it.kind === 'P') {
+      if (p.power < MAX_POWER) { p.power++; pop('POWER UP!', '#ff785a'); } else { this.score += 1000; pop('+1000', '#fff08c'); }
+    } else if (it.kind === 'B') {
+      if (p.bombs < MAX_BOMBS) { p.bombs++; pop('BOMB +1', '#78aaff'); } else this.score += 1000;
+    } else if (it.kind === 'L') {
+      if (p.lives < MAX_LIVES) { p.lives++; pop('1UP!', '#78e68c'); } else this.score += 2000;
+    } else { this.score += 500; pop('+500', '#fff08c'); }
+  }
+  finish(state, cause) {
+    if (this.score > hiScore) { hiScore = this.score; saveHi(hiScore); }
+    this.state = state;
+    this.submitRun(state === 'victory', cause || (state === 'victory' ? 'clear' : this.lastCause));
+  }
+  submitRun(cleared, cause) {
+    const duration = Math.round(this.totalT / FPS);
+    if (this.score <= 0 || duration < 10) return;
+    this.rankMsg = '';
+    DB.submitRun({
+      score: this.score, stage: this.stageIdx + 1, cleared, duration,
+      kills: this.kills, bombs: this.bombsUsed, cause,
+    }).then(r => {
+      if (r && r.rank) this.rankMsg = '내 랭킹 ' + r.rank + '위';
+      else if (r && !DB.token) this.rankMsg = '로그인하면 랭킹에 등록됩니다';
+    });
+  }
+
+  updatePlay() {
+    const p = this.player;
+    this.t++; this.totalT++; this.bg.update();
+    if (this.banner > 0) this.banner--;
+    if (this.warn > 0) this.warn--;
+    if (this.bombT > 0) this.bombT--;
+
+    if (this.clearTimer === 0) {
+      const waves = this.stage.waves;
+      while (this.waveI < waves.length && waves[this.waveI][0] * FPS <= this.t) {
+        const [, kind, x] = waves[this.waveI];
+        this.enemies.push(new Enemy(kind, x, this.stageIdx + 1)); this.waveI++;
+      }
+      if (!this.bossSpawned && this.t >= this.stage.bossTime * FPS) {
+        this.bossSpawned = true; this.boss = new Boss(this.stageIdx + 1);
+        this.warn = 150; Audio.play('warn');
+      }
+    }
+    if (!p.dead) p.update(inputs, this.pbul);
+    for (const b of this.pbul) b.update();
+    for (const b of this.ebul) b.update();
+    for (const e of this.enemies) e.update(p, this.ebul);
+    if (this.boss) this.boss.update(p, this.ebul);
+    for (const it of this.items) it.update(p);
+
+    const targets = this.boss ? [...this.enemies, this.boss] : this.enemies;
+    for (const b of this.pbul) {
+      if (b.dead) continue;
+      for (const e of targets) {
+        if (!e.dead && e.collide(b.x, b.y, b.r)) { b.dead = true; Audio.play('hit'); this.damage(e, b.dmg); break; }
+      }
+    }
+    if (!p.dead && p.inv <= 0) {
+      let hit = this.ebul.some(b => (b.x - p.x) ** 2 + (b.y - p.y) ** 2 < (b.r + p.hitR) ** 2);
+      if (hit) this.lastCause = 'enemy_bullet';
+      else if (targets.some(e => !e.dead && e.collide(p.x, p.y, p.hitR + 2))) { hit = true; this.lastCause = 'collision'; }
+      if (hit) this.hurtPlayer();
+    }
+    if (!p.dead) for (const it of this.items)
+      if ((it.x - p.x) ** 2 + (it.y - p.y) ** 2 < (it.r + 18) ** 2) { it.dead = true; this.applyItem(it); }
+
+    this.pbul = this.pbul.filter(b => !b.dead); this.ebul = this.ebul.filter(b => !b.dead);
+    this.enemies = this.enemies.filter(e => !e.dead); this.items = this.items.filter(i => !i.dead);
+    this.fx.update();
+    if (this.shake > 0) this.shake--;
+
+    if (this.clearTimer > 0 && --this.clearTimer === 0) {
+      if (this.stageIdx + 1 < STAGES.length) { this.stageIdx++; this.startStage(); }
+      else this.finish('victory');
+    }
+    if (p.dead && --this.overTimer <= 0) this.finish('gameover');
+  }
+
+  update() {
+    this.tick++;
+    readKeys();
+    const enter = pressedEnter, bomb = pressedBomb, pause = pressedPause, esc = pressedEsc;
+    pressedEnter = pressedBomb = pressedPause = pressedEsc = false;
+    if (this.state === 'title') { this.bg.update(.6); if (enter) this.newGame(); }
+    else if (this.state === 'play') {
+      if (esc) { this.submitRun(false, 'quit'); this.state = 'title'; return; }
+      if (pause) this.paused = !this.paused;
+      if (!this.paused) { if (bomb) this.useBomb(); this.updatePlay(); }
+    } else {
+      this.bg.update(.4);
+      if (enter) this.state = 'title';
+    }
+  }
+
+  drawHud() {
+    const p = this.player;
+    text('SCORE ' + String(this.score).padStart(7, '0'), 20, '#fff', 10, 20, 'left');
+    text('HI ' + String(Math.max(hiScore, this.score)).padStart(7, '0'), 20, '#ffe678', W - 10, 20, 'right');
+    for (let i = 0; i < p.lives; i++) drawPlane(22 + i * 28, H - 22, .5, '#c8d7e6', '#46965a');
+    text('BOMB x' + p.bombs, 18, '#8cbeff', W - 10, H - 40, 'right');
+    text('POWER', 14, '#fff', W - 130, H - 18);
+    for (let i = 0; i < MAX_POWER; i++) { ctx.fillStyle = i < p.power ? '#ff6e46' : '#464646'; ctx.fillRect(W - 95 + i * 18, H - 26, 14, 14); }
+    if (this.boss && this.boss.y >= 130) { this.boss.drawHud(); text('BOSS', 14, '#ff7878', W / 2, 42); }
+    if (this.banner > 0) text(this.stage.name, 28, '#fff', W / 2, H / 3);
+    if (this.warn > 0 && Math.floor(this.warn / 12) % 2 === 0) text('WARNING!!', 44, '#ff3c3c', W / 2, H / 3);
+    if (this.clearTimer > 0) text('STAGE CLEAR!', 40, '#fff078', W / 2, H / 3);
+    if (this.paused) text('PAUSED', 48, '#fff', W / 2, H / 2);
+    if ('ontouchstart' in window) {
+      ctx.globalAlpha = .55; circle(BOMB_BTN.x, BOMB_BTN.y, BOMB_BTN.r, '#3c78e6', '#fff', 2);
+      text('BOMB', 14, '#fff', BOMB_BTN.x, BOMB_BTN.y, 'center', false); ctx.globalAlpha = 1;
+    }
+  }
+  drawPlay() {
+    this.bg.draw();
+    for (const it of this.items) it.draw();
+    for (const e of this.enemies) e.draw();
+    if (this.boss) this.boss.draw();
+    for (const b of this.pbul) b.draw();
+    this.player.draw();
+    for (const b of this.ebul) b.draw();
+    this.fx.draw();
+    if (this.bombT > 0) {
+      const r = (60 - this.bombT) * 14, p = this.player;
+      circle(p.x, p.y, r, null, '#ffffc8', 8); circle(p.x, p.y, r - 30, null, '#ffb450', 4);
+    }
+    this.drawHud();
+  }
+  drawTitle() {
+    this.bg.draw();
+    text('1945', 96, '#ffdc46', W / 2, 190);
+    text('SKY STRIKER', 38, '#fff', W / 2, 265);
+    drawPlane(W / 2, 380 + (Math.floor(this.tick / 6) % 2) * 3, 2.2, '#c8d7e6', '#46965a');
+    if (Math.floor(this.tick / 30) % 2 === 0) text('PRESS ENTER / TAP', 28, '#fff', W / 2, 500);
+    text('이동: 방향키/WASD (Shift: 정밀)   터치: 드래그', 15, '#e6f0ff', W / 2, 560);
+    text('발사: Space/J/Z (터치 시 자동)   폭탄: B/X   일시정지: P', 15, '#e6f0ff', W / 2, 586);
+    text('HI SCORE ' + String(hiScore).padStart(7, '0'), 20, '#ffe678', W / 2, 640);
+    text(DB.token ? '👤 ' + DB.username : '우측 상단 버튼: 로그인 / 랭킹', 15, '#b4dcff', W / 2, 676);
+  }
+  drawEnd(title, color) {
+    this.bg.draw();
+    text(title, title.length > 10 ? 40 : 52, color, W / 2, 250);
+    text('SCORE ' + String(this.score).padStart(7, '0'), 28, '#fff', W / 2, 340);
+    text('HI SCORE ' + String(hiScore).padStart(7, '0'), 22, '#ffe678', W / 2, 385);
+    if (this.rankMsg) text(this.rankMsg, 22, '#9be89b', W / 2, 430);
+    if (Math.floor(this.tick / 30) % 2 === 0) text('PRESS ENTER / TAP', 26, '#fff', W / 2, 480);
+  }
+  draw() {
+    ctx.save();
+    if (this.shake > 0 && this.state === 'play') ctx.translate(rint(-4, 4), rint(-4, 4));
+    if (this.state === 'title') this.drawTitle();
+    else if (this.state === 'play') this.drawPlay();
+    else if (this.state === 'gameover') this.drawEnd('GAME OVER', '#ff5050');
+    else this.drawEnd('MISSION COMPLETE!', '#ffe65a');
+    ctx.restore();
+  }
+}
+
+// ---------- 서버(DB) 연동: 실패해도 게임은 오프라인으로 동작 ----------
+const $ = id => document.getElementById(id);
+const DB = {
+  token: null, username: '',
+  async api(method, url, body) {
+    const opt = { method, headers: { 'Content-Type': 'application/json' } };
+    if (this.token) opt.headers.Authorization = 'Bearer ' + this.token;
+    if (body) opt.body = JSON.stringify(body);
+    const res = await fetch(url, opt);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { const err = new Error(data.error || '요청 실패'); err.status = res.status; throw err; }
+    return data;
+  },
+  setAuth(token, username) {
+    this.token = token; this.username = username || '';
+    try { token ? localStorage.setItem('shooter1945_auth', JSON.stringify({ token, username })) : localStorage.removeItem('shooter1945_auth'); } catch (e) {}
+  },
+  async loadConfig() {
+    try {
+      const c = await this.api('GET', '/api/config');
+      if (c.player) Object.assign(CFG.player, c.player);
+      if (c.boss) Object.assign(CFG.boss, c.boss);
+      for (const [k, v] of Object.entries(c.enemies || {})) {
+        if (!TYPES[k]) continue;
+        if (Number.isFinite(v.hp)) TYPES[k].hp = v.hp;
+        if (Number.isFinite(v.score)) TYPES[k].score = v.score;
+        if (Number.isFinite(v.drop)) DROP[k] = v.drop;
+      }
+    } catch (e) { /* 기본값 사용 */ }
+  },
+  async submitRun(run) {
+    try { return await this.api('POST', '/api/runs', run); }
+    catch (e) { if (e.status === 401) this.setAuth(null); return null; }
+  },
+};
+try { const a = JSON.parse(localStorage.getItem('shooter1945_auth') || 'null'); if (a && a.token) DB.setAuth(a.token, a.username); } catch (e) {}
+
+function panelOpen() { return !$('panel').hidden; }
+function say(m, ok) { $('msg').style.color = ok ? '#9be89b' : '#ffb4b4'; $('msg').textContent = m || ''; }
+async function refreshPanel() {
+  $('authBox').hidden = !!DB.token; $('meBox').hidden = !DB.token;
+  try {
+    const rk = await DB.api('GET', '/api/ranking?limit=10');
+    $('rankList').innerHTML = rk.length ? '' : '<li style="list-style:none">아직 기록이 없습니다</li>';
+    for (const r of rk) {
+      const li = document.createElement('li');
+      li.textContent = r.username + ' (S' + r.stage + ')';
+      const sp = document.createElement('span'); sp.textContent = r.score.toLocaleString(); li.appendChild(sp);
+      $('rankList').appendChild(li);
+    }
+  } catch (e) { $('rankList').innerHTML = '<li style="list-style:none">랭킹 서버에 연결할 수 없습니다</li>'; }
+  if (DB.token) {
+    try {
+      const m = await DB.api('GET', '/api/me');
+      $('meName').textContent = '👤 ' + m.username;
+      $('meStats').textContent = `최고점 ${m.best.toLocaleString()} · 플레이 ${m.plays}회 · 클리어 ${m.clears}회 · 격추 ${m.kills}기 · 총 ${Math.round(m.totalSec / 60)}분`;
+    } catch (e) { if (e.status === 401) { DB.setAuth(null); refreshPanel(); } }
+  }
+}
+function openPanel() {
+  if (game.state === 'play') game.paused = true;
+  say(''); $('panel').hidden = false; refreshPanel();
+}
+function closePanel() { $('panel').hidden = true; if (document.activeElement) document.activeElement.blur(); }
+async function doAuth(kind) {
+  const username = $('uName').value.trim(), password = $('uPass').value;
+  try {
+    const r = await DB.api('POST', '/api/' + kind, { username, password });
+    DB.setAuth(r.token, r.username); $('uPass').value = ''; say('');
+    refreshPanel();
+  } catch (e) { say(e.message); }
+}
+$('menuBtn').onclick = openPanel;
+$('closeBtn').onclick = closePanel;
+$('panel').addEventListener('pointerdown', e => { if (e.target === $('panel')) closePanel(); });
+$('loginBtn').onclick = () => doAuth('login');
+$('regBtn').onclick = () => doAuth('register');
+$('uPass').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth('login'); });
+$('logoutBtn').onclick = () => { DB.setAuth(null); refreshPanel(); };
+addEventListener('keydown', e => { if (e.key === 'Escape' && panelOpen()) closePanel(); });
+DB.loadConfig();
+
+const game = new Game();
+let last = performance.now(), acc = 0;
+const STEP = 1000 / FPS;
+function frame(now) {
+  acc += Math.min(100, now - last); last = now;
+  let n = 0;
+  while (acc >= STEP && n++ < 5) { game.update(); acc -= STEP; }
+  game.draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

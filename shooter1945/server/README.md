@@ -1,0 +1,42 @@
+# 1945game 서버 (Node.js + Express + MySQL)
+
+게임 파일(`../web`)과 API(`/api/*`)를 한 프로세스에서 서빙합니다.
+
+## 1. DB 만들기 (Oracle 서버의 MySQL)
+```bash
+mysql -u root -p < schema.sql          # 1945game DB, 테이블 3개, 기본 설정값 생성
+```
+앱 전용 계정을 만들려면 `schema.sql` 맨 아래 주석을 풀고 비밀번호를 바꿔 실행하세요 (이 DB에만 권한 부여).
+
+테이블: `players`(계정) · `play_logs`(판별 기록: 랭킹+통계) · `game_config`(밸런스 JSON)
+
+## 2. 환경변수
+```bash
+cp .env.example .env   # DB_USER / DB_PASSWORD / JWT_SECRET 채우기
+```
+
+## 3. 실행
+```bash
+npm install --omit=dev
+npm start              # http://localhost:3000
+# 상시 실행: sudo npm i -g pm2 && pm2 start server.js --name 1945game && pm2 save
+```
+
+## 4. nginx 리버스 프록시 (예)
+```
+location / { proxy_pass http://127.0.0.1:3000; proxy_set_header X-Forwarded-For $remote_addr; }
+```
+3000 포트는 외부에 열지 말고 80/443만 여세요.
+
+## API
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| POST | /api/register, /api/login | 계정 (JWT 반환) |
+| GET | /api/config | 게임 설정 (`game_config`) |
+| POST | /api/runs | 1판 결과 저장 (로그인 시 랭킹 반영) |
+| GET | /api/ranking?limit=10 | TOP 랭킹 |
+| GET | /api/me | 내 통계 (로그인 필요) |
+
+## 밸런스 수정
+`UPDATE game_config SET cfg_value = JSON_SET(cfg_value, '$.medium.hp', 24) WHERE cfg_key='enemies';`
+(적 체력/점수/드롭률, 보스 체력, 시작 목숨·폭탄 — 재시작 없이 1분 내 반영)
